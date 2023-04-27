@@ -9,21 +9,16 @@ use scrypto::prelude::*;
 
 #[blueprint]
 mod dao {
-  struct Dao {
+  struct DAO {
     // alpha Delta and omega
     // the authority on everything
     dao_superbadge: Vault,
 
-    // delegate resource
-    delegate_resource: ResourceAddress,
-
-    // next power index
-    power_id: u32,
-
     // from power index to a pair of 
-    // superauth badge + list of delegate badges
+    // delegate resource + list of delegate badges
     // uses delegate resource
-    power_map: HashMap<u32, (ResourceAddress, Vec<u32>)>
+    // TODO change u32 for VaultId?? to call recall on it?
+    power_map: HashMap<ResourceAddress, Vec<u32>>
     // TODO need to encode how to update
     // store a pointer? if it can work
     // ...
@@ -31,11 +26,14 @@ mod dao {
     //  add_access_check on comps
     // and 
     // set_X on resources?
-    // should work!
+    // should work!    
+    // ...
+    // or just don't update? 
+    // much easier but NEEDS recall capability
 
   }
 
-  impl Dao {
+  impl DAO {
 
     // instantiates the DAO
     // genesis gets delagated all the power 
@@ -58,19 +56,48 @@ mod dao {
           // recall for cleaning up old badges
           .recallable(
             rule!(require(dao_superbadge.resource_address())), LOCKED)
+          .restrict_withdraw(
+            rule!(require(dao_superbadge.resource_address())), LOCKED)
+          .restrict_deposit(
+            rule!(require(dao_superbadge.resource_address())), LOCKED)
+          
           .metadata("name", "EDAO DELEGATE")
           .create_with_no_initial_supply();
       
-      let mut power_id: u32 = 0; 
+      let mut power_map = HashMap::new();
 
-
+      // builtin powers, powers over self
+      
+      // power 0 -- RETURN TO NOTHING
+      // rips dao's soul out and transfers (or destroys) it to a new form
+      
 
       Self {
         dao_superbadge: dao_superbadge,
-        delegate_resource: owner_resource,
-        power_id: 0,
-        power_map: HashMap::new()
+        power_map: power_map
       }.instantiate().globalize()
+
+    }
+
+    // TODO impl
+    // allows superbadge transfer
+    // TODO Auth guard only Power 0
+    pub fn to_nothing() {
+
+    }
+
+    // TODO impl
+    // allows arbitrary change of power map
+    // TODO Auth guard only Power 1
+    pub fn shift_power() {
+      // update the map AND RECALL THE NFT
+      // ASSUMPTION BEING THAT AUTHRULES DON'T NEED TO BE UPDATED
+    }
+
+    // TODO impl
+    // creates the resource, adds it to the map
+    // TODO Auth guard only Power 1
+    pub fn add_power() {
 
     }
 
