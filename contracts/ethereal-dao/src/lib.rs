@@ -96,7 +96,7 @@ mod dao {
           .metadata("name", "EDAO POWER ZERO")
           .create_with_no_initial_supply();
       
-      power_map.insert(power_zero, vec![]).unwrap();
+      power_map.insert(power_zero, vec![]);
 
       // Power 1 -- MONOPOLY OVER VIOLENCE
       // exerts the dao's power over internal powers
@@ -124,7 +124,7 @@ mod dao {
             .mint_uuid_non_fungible(DelegateBadge { id: delegate_id } )
           )
         );
-      power_map.insert(power_one, vec![delegate_id]).unwrap();
+      power_map.insert(power_one, vec![delegate_id]);
 
       delegate_id += 1;
 
