@@ -68,8 +68,6 @@ mod dao {
       let dao_superbadge = Vault::with_bucket(ResourceBuilder::new_fungible()
         .mintable(rule!(deny_all), LOCKED)
         .burnable(rule!(deny_all), LOCKED)
-        // recall for cleaning up post liquidation
-        .recallable(rule!(deny_all), LOCKED)
         .metadata("name", "EDAO SUPERBADGE")
         // TODO add name param?
         .mint_initial_supply(1));
@@ -133,7 +131,8 @@ mod dao {
       let acc_rules = 
         AccessRulesConfig::new()
           .method("to_nothing", rule!(require(power_zero)), LOCKED)
-          .method("shift_power", rule!(require(power_one)), LOCKED)
+          .method("add_delegation", rule!(require(power_one)), LOCKED)
+          .method("remove_delegation", rule!(require(power_one)), LOCKED)
           .method("add_power", rule!(require(power_one)), LOCKED)
           .method("remove_power", rule!(require(power_one)), LOCKED)
           .default(rule!(allow_all), LOCKED);
@@ -149,17 +148,26 @@ mod dao {
       .globalize_with_access_rules(acc_rules)
     }
 
-    // TODO impl
+    // AuthRule: Power 0
     // allows superbadge transfer
-    pub fn to_nothing() {
-
+    pub fn to_nothing(&mut self) -> Bucket {
+      self.dao_superbadge.take_all()
     }
 
-    // TODO impl
-    // allows arbitrary change of power map
-    pub fn shift_power() {
-      // update the map AND RECALL THE NFT
-      // ASSUMPTION BEING THAT AUTHRULES DON'T NEED TO BE UPDATED
+    // AuthRule: Power 1
+    // adds delegation to the power map
+    pub fn add_delegation(power: ResourceAddress) {
+      // the function assumes that no auth rules or function calls need to be made
+
+      // spit out token vs deposit? 
+      // deposit is better can just guard it on their end to only allow superbadge
+    }
+
+    // AuthRule: Power 1
+    // removes delegation from the power map
+    pub fn remove_delegation(power: ResourceAddress) {
+      // the function assumes that no auth rules or function calls need to be made
+
     }
 
     // TODO impl
