@@ -1,14 +1,29 @@
 use scrypto::prelude::*;
 
-external_component! {
-  Genesis {
-      fn deposit(&mut self, input: Bucket);
-  }
-}
-
 #[derive(ScryptoSbor, NonFungibleData)]
 pub struct DelegateBadge {
     id: u64,
+}
+
+// hack over dynamic dispatch not working
+// stand-in for account really
+external_component! {
+  Account {
+    fn deposit(&mut self, input: Bucket);
+  }
+}
+
+// hack over dynamic dispatch not working
+// stand-in for the upgrade script really
+//
+// unfortunately no way for component to know its own addr
+// meaning that the DaoUp script has to either 
+// have a hardcoded one or one that's passed into its instantiated form
+// former easier than latter for now better practice imo
+external_blueprint! {
+  DaoUp {
+    fn the_dao_is_dead(input: Bucket) -> ComponentAddress;
+  }
 }
 
 // the DAO blueprint manages a set of components
@@ -102,7 +117,7 @@ mod dao {
       // exerts the dao's power over internal powers
       // adding, removing, or changing their structure 
       let power_one = 
-        ResourceBuilder::new_uuid_non_fungible::<()>()
+        ResourceBuilder::new_uuid_non_fungible::<DelegateBadge>()
           .mintable(
             rule!(require(dao_superbadge.resource_address())), LOCKED)
           .burnable(
@@ -118,12 +133,11 @@ mod dao {
           .create_with_no_initial_supply();
 
       // genesis gets the initial power one delegation
-      Genesis::at(genesis).deposit(
-        dao_superbadge.authorize(|| 
-          borrow_resource_manager!(power_one)
-            .mint_uuid_non_fungible(DelegateBadge { id: delegate_id } )
-          )
-        );
+      dao_superbadge.authorize(||
+        Account::at(genesis).deposit(
+            borrow_resource_manager!(power_one)
+              .mint_uuid_non_fungible(DelegateBadge { id: delegate_id } ) 
+          ));
       power_map.insert(power_one, vec![delegate_id]);
 
       delegate_id += 1;
@@ -148,6 +162,38 @@ mod dao {
       .globalize_with_access_rules(acc_rules)
     }
 
+    // todo comment out and do update on RCnet
+    pub fn from_something(
+      dao_superbadge: Bucket,
+      power_map: 
+        HashMap<
+          ResourceAddress, 
+          Vec<u64>>,
+      delegate_id: u64,
+      power_zero: ResourceAddress,
+      power_one: ResourceAddress
+      ) -> ComponentAddress {
+      
+      let acc_rules = 
+        AccessRulesConfig::new()
+          .method("to_nothing", rule!(require(power_zero)), LOCKED)
+          .method("add_delegation", rule!(require(power_one)), LOCKED)
+          .method("remove_delegation", rule!(require(power_one)), LOCKED)
+          .method("add_power", rule!(require(power_one)), LOCKED)
+          .method("remove_power", rule!(require(power_one)), LOCKED)
+          .default(rule!(allow_all), LOCKED);
+
+      Self {
+        dao_superbadge: Vault::with_bucket(dao_superbadge),
+        power_map: power_map,
+        delegate_id: delegate_id,
+        power_zero: power_zero,
+        power_one: power_one
+      }
+      .instantiate()
+      .globalize_with_access_rules(acc_rules)
+    }
+
     // AuthRule: Power 0
     // allows superbadge transfer
     pub fn to_nothing(&mut self) -> Bucket {
@@ -156,24 +202,88 @@ mod dao {
 
     // AuthRule: Power 1
     // adds delegation to the power map
-    pub fn add_delegation(power: ResourceAddress) {
+    pub fn add_delegation(
+      &mut self, 
+      power: ResourceAddress,
+      addr: Result<ComponentAddress, PackageAddress>,
+      // fun: String
+      ) {
       // the function assumes that no auth rules or function calls need to be made
+      // also, AS A HACK, w/o dynamic dispatch, assumes a specific form to the calls
+      // i.e. the ABI being exactly as of 'Account' and 'DaoUp'
 
-      // spit out token vs deposit? 
-      // deposit is better can just guard it on their end to only allow superbadge
+      match addr {
+        Ok(ca) => 
+          self.dao_superbadge.authorize(|| 
+            Account::at(ca).deposit(
+              borrow_resource_manager!(power)
+                .mint_uuid_non_fungible(DelegateBadge { id: self.delegate_id } ) 
+            )),
+        Err(pa) => { 
+          self.dao_superbadge.authorize(|| 
+            DaoUp::at(pa, "DAOUP").the_dao_is_dead(
+              borrow_resource_manager!(power)
+                .mint_uuid_non_fungible(DelegateBadge { id: self.delegate_id } ) 
+              )
+            );
+          ()
+          }
+      };
+      // THIS IS HOW IT SHOULD BE DONE, ROUGHLY
+      // CURRENTLY THE SET-NAME HACK IS IN PLACE
+      // match addr {
+      //   Ok(ca) => borrow_component!(ca).call(
+      //     &*fun,
+      //     args![
+      //       self.dao_superbadge.authorize(|| 
+      //         borrow_resource_manager!(power)
+      //           .mint_uuid_non_fungible(DelegateBadge { id: self.delegate_id } )
+      //       )
+      //     ]
+      //     ),
+      //   Err((pa,md)) => borrow_package!(ca).call(
+      //     &*fun,
+      //     &*md,
+      //     args![ // apparantly scrypto_args! is the way now
+      //       self.dao_superbadge.authorize(|| 
+      //         borrow_resource_manager!(power)
+      //           .mint_uuid_non_fungible(DelegateBadge { id: self.delegate_id } )
+      //       )
+      //     ]
+      //     )
+      // };
+      self.power_map.insert(power, vec![self.delegate_id]);
+      self.delegate_id += 1;
     }
 
     // AuthRule: Power 1
     // removes delegation from the power map
-    pub fn remove_delegation(power: ResourceAddress) {
+    pub fn remove_delegation(_power: ResourceAddress) {
       // the function assumes that no auth rules or function calls need to be made
 
     }
 
-    // TODO impl
-    // creates the resource, adds it to the map
-    pub fn add_power() {
+    pub fn add_power(&mut self) {
+      let mut name = "EDAO POWER ".to_owned();
+      name.push_str(&*self.power_map.keys().count().to_string());
 
+      let power_n = 
+        ResourceBuilder::new_uuid_non_fungible::<DelegateBadge>()
+          .mintable(
+            rule!(require(self.dao_superbadge.resource_address())), LOCKED)
+          .burnable(
+            rule!(require(self.dao_superbadge.resource_address())), LOCKED)
+          // recall for cleaning up old badges
+          .recallable(
+            rule!(require(self.dao_superbadge.resource_address())), LOCKED)
+          .restrict_withdraw(
+            rule!(require(self.dao_superbadge.resource_address())), LOCKED)
+          .restrict_deposit(
+            rule!(require(self.dao_superbadge.resource_address())), LOCKED)
+          .metadata("name", name)
+          .create_with_no_initial_supply();
+
+        self.power_map.insert(power_n, vec![]);
     }
 
     // TODO impl
@@ -181,6 +291,26 @@ mod dao {
     // only works if the delegates are empty
     pub fn remove_power() {
 
+    }
+
+    // returns the current state 
+    // choose to return RA vs Vault on superbadge
+    pub fn look_within(&self) -> (
+      ResourceAddress, 
+      HashMap<
+        ResourceAddress, 
+        Vec<u64>>,
+      u64,
+      ResourceAddress,
+      ResourceAddress) {
+
+      (
+        self.dao_superbadge.resource_address(), 
+        self.power_map.clone(),
+        self.delegate_id,
+        self.power_zero,
+        self.power_one
+      )
     }
 
   }

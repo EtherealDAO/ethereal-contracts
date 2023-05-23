@@ -1,0 +1,18 @@
+CALL_METHOD
+    Address("account_sim1qjsakxva8p9f7rmnv656wgr97zh0f56hd7ynu5e5apjqj7zr7g")
+    "create_proof_by_amount"
+    Address("resource_sim1q20pkq9dkw56f7fduaw7hxs3f8gg3jdsyaplwr9thchs9mmq96")
+    Decimal("1");
+CALL_METHOD
+    Address("component_sim1q0kryz5scup945usk39qjc2yjh6l5zsyuh8t7v5pk0tshjs68x")
+    "lock_fee"
+    Decimal("100");
+CALL_FUNCTION
+    Address("package_sim1qrcp0gfwpy2pj6zksxv56cuy0tf6qe32gxhrfxrkkstszu9slr")
+    "DAO"
+    "from_nothing"
+    Address("account_sim1qjsakxva8p9f7rmnv656wgr97zh0f56hd7ynu5e5apjqj7zr7g");
+CALL_METHOD
+    Address("account_sim1qjsakxva8p9f7rmnv656wgr97zh0f56hd7ynu5e5apjqj7zr7g")
+    "deposit_batch"
+    Expression("ENTIRE_WORKTOP");
