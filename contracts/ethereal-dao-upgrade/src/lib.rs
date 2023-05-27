@@ -69,6 +69,8 @@ mod daoup {
       .globalize()
     }
 
+    // d1 and d2 need to be passed in as arguments 
+    // or get cucked by CallFrameError(RENodeNotVisible .. )) error
     pub fn long_live_the_dao(&mut self, d1: ComponentAddress, d2: PackageAddress) -> ComponentAddress {
       
       let dao1 = ComponentAddress::try_from_hex(OLD_ADDR).unwrap();
