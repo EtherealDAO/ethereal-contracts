@@ -1,5 +1,21 @@
 use scrypto::prelude::*;
 
+#[derive(ScryptoSbor, NonFungibleData)]
+pub struct UserReceipt {
+  #[mutable]
+  // counts the XRD in protocol (the debt will be mandatorily pegged)
+  // gets updated remotely (can it? would be nice if it could)
+  // should work: TODO: store the UUID id in the CDP contract
+  protocol_lp: Decimal
+  #[mutable]
+  // REAL (or REAL/XRD LP), protocol LP, eUSD/XRD LP
+  staked_token_amount: (Decimal, Decimal, Decimal), 
+  #[mutable]
+  // amount "claimed" per rewards vault
+  rewards_claimed: Vec<Decimal>, 
+  top_voted_index: u64 // can't vote for lower than this 
+}
+
 #[blueprint]
 mod ethereal {
   struct Ethereal {
@@ -13,7 +29,7 @@ mod ethereal {
     // TODO add oracle (for now 1:1)
 
     // list of pairs of assets to liabilities
-    cdps: Vec<(Decimal, Decimal)>,
+    cdps: Vec<(Decimal, Decimal)>, // TODO store user UUID
 
     owner_resource: ResourceAddress,
     owner_badge: Vault

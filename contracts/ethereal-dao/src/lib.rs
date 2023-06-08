@@ -5,7 +5,23 @@ pub struct DelegateBadge {
     id: u64,
 }
 
-// hack over dynamic dispatch not working
+// enum over all possible function calls with correct args 
+// because using dynamic dispatch is a pain
+// to be used as an argument to the methods
+#[derive(ScryptoSbor)]
+pub enum Action {
+  // DAO
+  AccountDeposit(ComponentAddress),
+  DaoUpdate(PackageAddress),
+
+  // GOV
+  GovUpdate(ComponentAddress, PackageAddress),
+
+  // STAKING
+  StakingInstantiate(PackageAddress),
+
+}
+
 // stand-in for account really
 external_component! {
   Account {
@@ -23,6 +39,14 @@ external_component! {
 external_blueprint! {
   DaoUp {
     fn the_dao_is_dead(input: Bucket) -> ComponentAddress;
+  }
+}
+
+external_component! {
+  Staking {
+    // this won't be called by DAO
+    // TODO come back after upgradability of Staking is figured out
+    fn instantiate_staking();
   }
 }
 
@@ -204,31 +228,58 @@ mod dao {
     // adds delegation to the power map
     pub fn add_delegation(
       &mut self, 
-      power: ResourceAddress,
-      addr: Result<ComponentAddress, PackageAddress>,
+      // power: Vec<ResourceAddress>,
+      action: Action
       // fun: String
       ) {
-      // the function assumes that no auth rules or function calls need to be made
-      // also, AS A HACK, w/o dynamic dispatch, assumes a specific form to the calls
-      // i.e. the ABI being exactly as of 'Account' and 'DaoUp'
-
-      match addr {
-        Ok(ca) => 
+      // reminder that despite having static dispatch any component/package
+      // with the same form will be able to be called
+    
+      // todo: no need to specify power when systic dispatch 
+      // power vector is not used
+      // simpledelegate function?
+      // would need an update of both DAO and GOV
+      // to facilitate new systems
+      // honeslty would like to see v2 to be dynamic dispatch
+      match action {
+        AccountDeposit(ca) => 
           self.dao_superbadge.authorize(|| 
             Account::at(ca).deposit(
-              borrow_resource_manager!(power)
+              borrow_resource_manager!(powers[0])
                 .mint_uuid_non_fungible(DelegateBadge { id: self.delegate_id } ) 
-            )),
-        Err(pa) => { 
-          self.dao_superbadge.authorize(|| 
+            )
+          ),
+        DaoUpdate(pa) => 
+          self.dao_superbadge.authorize(||
             DaoUp::at(pa, "DAOUP").the_dao_is_dead(
-              borrow_resource_manager!(power)
-                .mint_uuid_non_fungible(DelegateBadge { id: self.delegate_id } ) 
-              )
-            );
-          ()
-          }
-      };
+              borrow_resource_manager!(powers[0]) // could drop the pretense and use p0 directly
+                .mint_uuid_non_fungible(DelegateBadge { id: self.delegate_id })
+            )
+          ),
+        StakingInstantiate(pa) => 
+          self.dao_superbadge.authorize(|| 
+            borrow_resource_manager!(power)
+          ),
+        _ => panic!("todo lol")
+      }
+
+      // match addr {
+      //   Ok(ca) => 
+      //       self.dao_superbadge.authorize(|| 
+      //         Account::at(ca).deposit(
+      //           borrow_resource_manager!(power)
+      //             .mint_uuid_non_fungible(DelegateBadge { id: self.delegate_id } ) 
+      //         )),
+      //   Err((pa, m)) => { 
+      //     self.dao_superbadge.authorize(|| 
+      //       DaoUp::at(pa, m).the_dao_is_dead(
+      //         borrow_resource_manager!(power)
+      //           .mint_uuid_non_fungible(DelegateBadge { id: self.delegate_id } ) 
+      //         )
+      //       );
+      //     ()
+      //     }
+      // };
       // THIS IS HOW IT SHOULD BE DONE, ROUGHLY
       // CURRENTLY THE SET-NAME HACK IS IN PLACE
       // match addr {
@@ -261,8 +312,19 @@ mod dao {
     pub fn remove_delegation(_power: ResourceAddress) {
       // the function assumes that no auth rules or function calls need to be made
 
+      // TODO RECALL BS 
+      // probably need to first call a function on a component to return 
+      // the VaultID or whatever needed to recall it
+      // could instead store them all in the PowerMap
+      // ^ probably a better idea
+      // but still needs a FUNCTION TO CALL THAT'S NOT IN THE LIBRARY
+
+      // problem is that it cant't know the vault id lmao
+      // so it needs it to be passed in
+      // guard that target = id
     }
 
+    // AuthRule: Power 1
     pub fn add_power(&mut self) {
       let mut name = "EDAO POWER ".to_owned();
       name.push_str(&*self.power_map.keys().count().to_string());
@@ -286,6 +348,7 @@ mod dao {
         self.power_map.insert(power_n, vec![]);
     }
 
+    // AuthRule: Power 1
     // TODO impl
     // destroys the resource, removes it from the map
     // only works if the delegates are empty

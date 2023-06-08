@@ -22,7 +22,7 @@ mod reserve {
       tkn: Bucket, 
       tkn_total: Decimal, // tkn_total - tkn.amount() = issued
       issue_badge: ResourceAddress, // issue token
-      guardian_badge: ResourceAddress, // set limit on token issue
+      reserve_guardian_badge: ResourceAddress, // set limit on token issue
       upgrade_badge: ResourceAddress // rip the soul out
       ) 
       -> ComponentAddress
