@@ -3,92 +3,36 @@ use scrypto::blueprints::clock::TimePrecision;
 
 #[derive(ScryptoSbor, PartialEq, Clone)]
 pub enum Proposal {
-  // gives power zero to it
-  // can and may update more than one branch at once
-  // (N+1/2)/N consesnsus
-  UpdateBranch(PackageAddress, String, String),
-  // gives superbadge to it
-  // N/N consensus
-  UpdateSelf(PackageAddress, String, String)
+  Spend()
 }
 
 #[blueprint]
-mod dao {
-  // static-participant multisig 
-  // self-governed via 3/3, each participant being a DAO branch
-  struct Dao {
-    dao_superbadge: Vault,
-    souls: ResourceAddress,
-    power_zero: ResourceAddress,
+mod delta {
+  // dynamic-participant multisig executing treasury spending
+  // self-governs membership but requires proof of stake
+  // i.e 
+  struct Delta {
+    power_delta: Vault,
+    power_alpha: ResourceAddress,
 
     // active proposals
     proposals: Vec<(Proposal, Instant, 
       (Vec<String>, Vec<String>))>,
     proposal_index: u64, // current top index
-
     vote_duration: u64, // duration of votes in days before allowed to close 
+    
+    // doubles down as a whitelist and approved spending
+    asset_list: Vec<(ResourceAddres, Decimal)>,
+    treasury: KeyValueStore<ResourceAddress, Vault>,
   }
 
-  impl Dao {
+  impl Delta {
     // speaks the word and creates the world
-    // returns self addr, alpha addr, Delta addr, omega addr
-    pub fn from_nothing() -> (ComponentAddress, ResourceAddress) {
-      let dao_superbadge = Vault::with_bucket(ResourceBuilder::new_fungible()
-        .mintable(rule!(deny_all), LOCKED)
-        .burnable(rule!(deny_all), LOCKED)
-        .metadata("name", "EDAO SUPERBADGE")
-        .mint_initial_supply(1));
+    // returns self addr
+    pub fn from_nothing(
+      power_delta: Bucket, 
+      power_alpha: ResourceAddres) -> ComponentAddress {
 
-      let power_zero = 
-        ResourceBuilder::new_fungible()
-          .mintable(
-            rule!(require(dao_superbadge.resource_address())), LOCKED)
-          .burnable(
-            rule!(allow_all), LOCKED)
-          // recall for cleaning up old badges
-          // not really used, assumed that update script kills itself 
-          .recallable(
-            rule!(require(dao_superbadge.resource_address())), LOCKED)
-          .restrict_withdraw(
-            rule!(require(dao_superbadge.resource_address())), LOCKED)
-          .restrict_deposit(
-            rule!(require(dao_superbadge.resource_address())), LOCKED)
-          .metadata("name", "EDAO POWER ZERO")
-          .create_with_no_initial_supply();
-
-      let souls = 
-        ResourceBuilder::new_string_non_fungible::<()>()
-          .mintable(
-            rule!(deny_all), LOCKED)
-          .burnable(
-            rule!(deny_all), LOCKED)
-          .recallable(
-            rule!(deny_all), LOCKED)
-          .restrict_withdraw(
-            rule!(require(power_zero)), LOCKED)
-          .restrict_deposit(
-            rule!(require(power_zero)), LOCKED)
-          .metadata("name", "EDAO SOUL")
-          .mint_initial_supply([
-            ("alpha".try_into().unwrap(), ()),
-            ("Delta".try_into().unwrap(), ()),
-            ("omega".try_into().unwrap(), ())
-          ]);
-
-      let proposals = vec![];
-      let proposal_index: u64 = 0;
-      let vote_duration: u64 = 7;
-
-      let ca = Self {
-        dao_superbadge,
-        souls: souls.resource_address(),
-        power_zero,
-        proposals,
-        proposal_index,
-        vote_duration
-      }.instantiate().globalize();
-
-      // TODO instantiate all 3 houses.
       
       (ca, power_zero)
 
