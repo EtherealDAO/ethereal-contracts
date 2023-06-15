@@ -1,0 +1,28 @@
+CALL_METHOD
+    Address("account_sim1q3n84zjfy8r8sy05ksq3nhr7c7qjgwjr3vghqqklg4wqvlk67s")
+    "lock_fee"
+    Decimal("100");
+
+CALL_METHOD
+  Address("account_sim1q3n84zjfy8r8sy05ksq3nhr7c7qjgwjr3vghqqklg4wqvlk67s")
+  "create_proof"
+  Address("resource_sim1qt93avvykt5twrxtlh3jnnvjyfg025sr0lydw68ejq9sa3lce4");
+
+POP_FROM_AUTH_ZONE
+  Proof("user");
+
+CALL_METHOD
+  Address("account_sim1q3n84zjfy8r8sy05ksq3nhr7c7qjgwjr3vghqqklg4wqvlk67s")
+  "withdraw"
+  Address("resource_sim1qxhrg26zlvc928jck7tkf0gj8uak86g4m3aeqdtjwsmshhnlkh")
+  Decimal("7000");
+
+TAKE_FROM_WORKTOP
+  Address("resource_sim1qxhrg26zlvc928jck7tkf0gj8uak86g4m3aeqdtjwsmshhnlkh")
+  Bucket("real");
+
+CALL_METHOD
+  Address("component_sim1q0ax7lnqs2njwndt7wzckglggayt5mdxha3zu05ceruslh40xr")
+  "stake"
+  Bucket("real")
+  Proof("user");

@@ -373,7 +373,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "ethereal-omega"
+name = "ethereal-omega-v1"
 version = "0.1.0"
 dependencies = [
  "radix-engine",

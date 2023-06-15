@@ -1,0 +1,20 @@
+CALL_METHOD
+  Address("account_sim1q3n84zjfy8r8sy05ksq3nhr7c7qjgwjr3vghqqklg4wqvlk67s")
+  "lock_fee"
+  Decimal("100");
+
+CALL_METHOD
+  Address("account_sim1q3n84zjfy8r8sy05ksq3nhr7c7qjgwjr3vghqqklg4wqvlk67s")
+  "withdraw"
+  Address("resource_sim1qxhrg26zlvc928jck7tkf0gj8uak86g4m3aeqdtjwsmshhnlkh")
+  Decimal("100");
+
+TAKE_FROM_WORKTOP
+  Address("resource_sim1qxhrg26zlvc928jck7tkf0gj8uak86g4m3aeqdtjwsmshhnlkh")
+  Bucket("real");
+
+CALL_METHOD
+  Address("component_sim1q007v29zed5y00xkr4rs78ucuwn94amq28yczxza4n9qut7g4l")
+  "add_proposal"
+  Bucket("real")
+  Enum(0u8, "GOTH CHICKS ARE HOT");

@@ -1,15 +1,15 @@
 use scrypto::prelude::*;
 
 // TODO reuse in Delta locks
-// #[derive(ScryptoSbor, NonFungibleData)]
-// pub struct VoteReceipt {
-//   #[mutable]
-//   lp_amount: Decimal,
-//   #[mutable]
-//   top_voted_index: u64 
-//   // can't vote for lower than this 
-//   // + can't withdraw if it's still ongoing
-// }
+// NOTE: have to keep it in sync with internal state
+// but having this helps a lot with offchain querying user state
+#[derive(ScryptoSbor, NonFungibleData)]
+pub struct UserReceipt {
+  #[mutable]
+  lp_amount: Decimal,
+  #[mutable]
+  top_voted_index: u64 
+}
 
 #[derive(ScryptoSbor)]
 pub enum Vote {
@@ -21,12 +21,13 @@ pub enum Vote {
 external_component! {
   Dao {
     fn get_branch_addrs(&self) -> (ComponentAddress, ComponentAddress, ComponentAddress);
+    fn vote(&mut self, vote: bool, proposal: u64, proof: Proof);
   }
 }
 
 external_component! {
   Alpha {
-    fn get_proposal_index(&self) -> u64;
+    fn get_proposal_indices(&self) -> (u64, u64);
     fn vote(&mut self, vote: Vote, proposal: u64);
   }
 }
@@ -69,9 +70,9 @@ mod omega {
     // doubles down as a from_nothing and from_something
     pub fn from_nothing(
       dao_addr: ComponentAddress,
+      power_zero: ResourceAddress,
       power_omega: Bucket, 
       power_delta: ResourceAddress,
-      power_zero: ResourceAddress,
       token: Bucket
       ) 
       -> ComponentAddress {
@@ -80,7 +81,7 @@ mod omega {
       let token_issued = 
         borrow_resource_manager!(staked_resource).total_supply() - token.amount();
       let staked_vault = Vault::new(staked_resource);
-      let nft_resource = ResourceBuilder::new_uuid_non_fungible::<()>()
+      let nft_resource = ResourceBuilder::new_uuid_non_fungible::<UserReceipt>()
         .mintable(
           rule!(require(power_omega.resource_address())), LOCKED)
         .burnable(
@@ -92,7 +93,6 @@ mod omega {
       let acc_rules = 
         AccessRulesConfig::new()
           .method("to_nothing", rule!(require(power_zero)), LOCKED)
-          // hope dyslexia isn't a problem 
           .method("issue", rule!(require(power_delta)), LOCKED)
           .default(rule!(allow_all), LOCKED);
       
@@ -123,6 +123,13 @@ mod omega {
       self.token.take(amount)
     }
 
+    // AuthRule: power_delta
+    // puppeteered only in V1
+    pub fn vote_dao(&self, vote: bool, proposal: u64) {
+      let proof = self.power_omega.create_proof();
+      Dao::at(self.dao_addr).vote(vote, proposal, proof);
+    } 
+
     // AuthRule: power_zero
     // rips the soul + all the tokens out for upgrade purposes
     pub fn to_nothing(&mut self) -> (Bucket, Bucket) {
@@ -143,26 +150,27 @@ mod omega {
     pub fn new_user(&self) -> Bucket {
       self.power_omega.authorize(|| 
         borrow_resource_manager!(self.nft_resource)
-          .mint_uuid_non_fungible::<()>(())
+          .mint_uuid_non_fungible::<UserReceipt>( 
+            UserReceipt { lp_amount: dec!(0), top_voted_index: 0u64 })
       )
     }
 
     // when adding stake, it doesn't 'vote up' the vote
     // i.e. any votes for pending proposals get lost
+    // NOTE: if user had stake AND voted already, then the vote doesn't 'update'
     pub fn stake(&mut self, input: Bucket, user: Proof) {
       // Remember to check/update unclaimed to init token_amount 
       // in case new rewards type was added 
 
-      let nft: NonFungible<()> = user
+      let nft: NonFungible<UserReceipt> = user
         .validate_proof(self.nft_resource)
         .expect("wrong resource")
         .non_fungible();
-
-      let current_index = 
-        Alpha::at(Dao::at(self.dao_addr).get_branch_addrs().0).get_proposal_index();
+      let data = nft.data();
 
       // impl as only REAL staking for now
-      assert!( input.resource_address() == self.token.resource_address(),
+      assert!( 
+        input.resource_address() == self.token.resource_address(),
         "wrong stake token" );
 
       let id = match nft.local_id() {
@@ -170,16 +178,19 @@ mod omega {
         _ => panic!("resource incoherence")
       };
 
+      // update first due to rust borrow checker
+      self.power_omega.authorize(|| 
+        borrow_resource_manager!(self.nft_resource)
+          .update_non_fungible_data(
+            &nft.local_id(),
+            "lp_amount",
+            data.lp_amount + input.amount()
+          )
+      );
+
       if let Some(r) = self.vote_locks.get(&id) {
-        let (ix, x) = *r;
-        if ix < current_index {
-          // not voted, not locked
-          self.vote_locks.insert(id, (ix, x + input.amount()));
+          self.vote_locks.insert(id, (r.0, r.1 + input.amount()));
           self.staked_vault.put(input);
-        } else {
-          // locked 
-          panic!("add stake after vote");
-        }
       } else {
         // no stake
         self.vote_locks.insert(id, (0u64, input.amount()));
@@ -188,25 +199,39 @@ mod omega {
     }
 
     pub fn unstake(&mut self, amount: Decimal, user: Proof) -> Bucket {
-      let nft: NonFungible<()> = user
+      let nft: NonFungible<UserReceipt> = user
         .validate_proof(self.nft_resource)
         .expect("wrong resource")
         .non_fungible();
+      let data = nft.data();
 
-      let current_index = 
-        Alpha::at(Dao::at(self.dao_addr).get_branch_addrs().0).get_proposal_index();
+      let (current_index, _) = 
+        Alpha::at(Dao::at(self.dao_addr).get_branch_addrs().0).get_proposal_indices();
 
       let id = match nft.local_id() {
         NonFungibleLocalId::UUID(uuid) => uuid.value(),
         _ => panic!("resource incoherence")
       };
 
+      // check correct unstake amount
+      assert!(
+        amount <= data.lp_amount && dec!(0) < amount, 
+        "incorrect amount");
+
       if let Some(r) = self.vote_locks.get(&id) {
         let (ix, x) = *r;
         if ix < current_index {
           // not voted, not locked
-          assert!(x >= amount, "over-unstake");
           self.vote_locks.insert(id, (ix, x - amount));
+
+          self.power_omega.authorize(|| 
+            borrow_resource_manager!(self.nft_resource)
+              .update_non_fungible_data(
+                &nft.local_id(),
+                "lp_amount",
+                data.lp_amount - amount
+              )
+          );
 
           return self.staked_vault.take(amount);
         } else {
@@ -215,20 +240,21 @@ mod omega {
         }
       } else {
         // no stake
-        panic!("unstake from emptyness");
+        panic!("unstake from emptiness");
       }
     }
 
     // could remove the proposal arg from this + upstream if it gets too big
     // or annoying, it's just a double check against accidental votes when prior finalizes
     pub fn vote(&self, vote: Vote, proposal: u64, user: Proof) {
-      let nft: NonFungible<()> = user
+      let nft: NonFungible<UserReceipt> = user
         .validate_proof(self.nft_resource)
         .expect("wrong resource")
         .non_fungible();
+      let data = nft.data();
 
-      let current_index = 
-        Alpha::at(Dao::at(self.dao_addr).get_branch_addrs().0).get_proposal_index();
+      let (_, last_index) = 
+        Alpha::at(Dao::at(self.dao_addr).get_branch_addrs().0).get_proposal_indices();
 
       let id = match nft.local_id() {
         NonFungibleLocalId::UUID(uuid) => uuid.value(),
@@ -237,28 +263,43 @@ mod omega {
 
       if let Some(r) = self.vote_locks.get(&id) {
         let (ix, x) = *r; 
-        if ix < current_index {
+        // user forefits the right to vote on prior proposals
+        if ix < proposal {
           // not voted, not locked
+
+          // check to avoid malicious/mistaken frontends
+          assert!( ix < last_index, "vote on non existing proposal");
+
+          // TODO could just remove this as an arg and 
+          // just create it here
           match vote {
             Vote::For(n) => assert!(n == x, "wrong vote size"),
             Vote::Against(n) => assert!(n == x, "wrong vote size"),
             Vote::Abstain(n) => assert!(n == x, "wrong vote size"),
           };
+          assert!(x == data.lp_amount, "user receipt incoherence");
 
+          // update lock, nft data and execute vote
           self.vote_locks.insert(id, (proposal, x));
-          self.power_omega.authorize(|| 
+          self.power_omega.authorize(|| {
+            borrow_resource_manager!(self.nft_resource)
+              .update_non_fungible_data(
+                &nft.local_id(),
+                "top_voted_index",
+                proposal
+              );
+
             // if proposal was wrong, it'll explode here
             Alpha::at(Dao::at(self.dao_addr).get_branch_addrs().0)
-              .vote(vote, proposal)
-          );
-
+              .vote(vote, proposal);
+          });
         } else {
           // locked 
           panic!("vote after vote");
         }
       } else {
         // no stake
-        panic!("vote from emptyness");
+        panic!("vote from emptiness");
       }
     }
   }

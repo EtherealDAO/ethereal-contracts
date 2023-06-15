@@ -1,0 +1,27 @@
+CALL_METHOD
+    Address("account_sim1q3n84zjfy8r8sy05ksq3nhr7c7qjgwjr3vghqqklg4wqvlk67s")
+    "lock_fee"
+    Decimal("100");
+
+CALL_METHOD
+  Address("account_sim1q3n84zjfy8r8sy05ksq3nhr7c7qjgwjr3vghqqklg4wqvlk67s")
+  "withdraw"
+  Address("resource_sim1qxhrg26zlvc928jck7tkf0gj8uak86g4m3aeqdtjwsmshhnlkh")
+  Decimal("90000");
+
+TAKE_FROM_WORKTOP
+  Address("resource_sim1qxhrg26zlvc928jck7tkf0gj8uak86g4m3aeqdtjwsmshhnlkh")
+  Bucket("token");
+
+CALL_FUNCTION
+  Address("package_sim1qqgtscxxka5umlgvdnvzfwm3x9csdxz4r4c8pfd0528sc7al2f")
+  "Dao"
+  "from_nothing"
+  Address("package_sim1qzr6hl3n0gfghnpxrmvlmkavrzaxcshutmxrvvxtnvhsjch9xu")
+  3u64
+  Enum(0u8)
+  Decimal("100")
+  Address("package_sim1qrgc60ny9tufljfddhjnvzz47rdqljs3cttkfpyjll8sysjk76")
+  Address("package_sim1qz0f7xkgchjmppxpavdjzdd7j3d2cy35t8gqc56w3mjshlrf5g")
+  Bucket("token")
+  Address("resource_sim1qyqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqs6d89k");

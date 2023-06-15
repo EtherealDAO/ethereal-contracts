@@ -1,25 +1,46 @@
 use scrypto::prelude::*;
 use scrypto::blueprints::clock::TimePrecision;
 
-#[derive(ScryptoSbor, NonFungibleData)]
-pub struct DelegateBadge {
-    id: u64,
+type Addr = Result<ComponentAddress, (PackageAddress, String)>;
+
+#[derive(ScryptoSbor, PartialEq, Clone)]
+pub enum EDaoProposal {
+  UpdateBranch(PackageAddress, String, String),
+  UpdateSelf(PackageAddress, String, String)
 }
+
+#[derive(ScryptoSbor, PartialEq, Clone)]
+pub enum DeltaProposal {
+  // NOTE: doesn't work with NFTs
+  Spend(ResourceAddress, Decimal, Addr, String),
+  Issue(Decimal),
+  Whitelist(ResourceAddress),
+
+  // Omega
+  OmegaVoteEDao(bool, u64),
+
+  // EDao actions
+  EDaoAddProposal(EDaoProposal),
+  EDaoVote(bool, u64)
+}
+
 
 #[derive(ScryptoSbor, Clone)]
 pub enum Action {
   // Protocol (i.e. EtherealUSD actions)
   ProtocolUpdateParams(), // TODO
-  ProtocolUpdate(),
-  // DAO actions
-  DaoVote(), // arg proposal + idx
+  ProtocolUpdate(), // TODO
+
+  // EDAO actions
+  EDaoAddProposal(EDaoProposal),
+  EDaoVote(bool, u64), 
+
   // Alpha actions 
-  AlphaChangeParams(),
+  AlphaChangeParams(u64, Option<Decimal>, Decimal),
+
   // Delta actions 
-  DeltaApproveSpend(),
-  DeltaForceExecute(),
-  // Bootstrap actions
-  BootstrapAsDelta() // if delta empty, act as delta
+  DeltaPuppeteer(DeltaProposal),
+  DeltaAllowSpend(ResourceAddress, Decimal)
 }
 
 // EXTERNAL STATIC MODELS
@@ -27,12 +48,16 @@ pub enum Action {
 external_component! {
   Dao {
     fn get_branch_addrs(&self) -> (ComponentAddress, ComponentAddress, ComponentAddress);
+    fn add_proposal(&mut self, proposal: EDaoProposal, proof: Proof);
+    fn vote(&mut self, vote: bool, proposal: u64, proof: Proof);
   }
 }
 
 external_component! {
   Delta {
     fn deposit(&mut self, input: Bucket);
+    fn puppeteer(&mut self, proposal: DeltaProposal);
+    fn allow_spend(&mut self, resource: ResourceAddress, amnt: Decimal);
   }
 }
 
@@ -64,7 +89,6 @@ pub enum Vote {
 mod alpha {
   struct Alpha {
     dao_addr: ComponentAddress,
-    dao_superbadge: ResourceAddress,
     power_zero: ResourceAddress,
     // authority of alpha
     // over protocol and itself
@@ -92,7 +116,6 @@ mod alpha {
     // instantiates the Alpha component
     pub fn from_nothing(
       dao_addr: ComponentAddress,
-      dao_superbadge: ResourceAddress, 
       power_zero: ResourceAddress,
       power_alpha: Bucket,
       power_omega: ResourceAddress,
@@ -114,13 +137,12 @@ mod alpha {
 
       Self {
         dao_addr,
-        dao_superbadge,
         power_zero,
         power_alpha: Vault::with_bucket(power_alpha),
         power_omega,
 
         proposals: vec![],
-        proposal_index: 0u64,
+        proposal_index: 1u64,
 
         gov_token,
 
@@ -132,9 +154,15 @@ mod alpha {
       .globalize_with_access_rules(acc_rules)
     }
 
+    // AuthRule: Power 0
+    pub fn to_nothing(&mut self) -> Bucket {
+      self.power_alpha.take_all()
+      // TODO block calls if the soul was ripped out
+    }
+
     // omega needs this
-    pub fn get_proposal_index(&self) -> u64 {
-      self.proposal_index
+    pub fn get_proposal_indices(&self) -> (u64, u64) {
+      (self.proposal_index, self.proposal_index + self.proposals.len() as u64)
     }
 
     // adds proposal to internal list of vote-able proposals
@@ -155,13 +183,13 @@ mod alpha {
     // this call is trusted, alpha only aggregates the calls
     pub fn vote(&mut self, vote: Vote, proposal: u64) {
       assert!( proposal >= self.proposal_index, "veto on finalized proposal");
-      let ix = self.proposal_index - proposal;
+      let ix = proposal - self.proposal_index;
 
       let p = &self.proposals[ix as usize];
       assert!( p.2.0 >= dec!(0), "proposal veto'd");
 
       assert!(
-        Clock::current_time_is_strictly_after( 
+        Clock::current_time_is_strictly_before( 
           p.1.add_days(self.alpha_vote_duration as i64).expect("failed to add days"), 
           TimePrecision::Minute ),
         "vote after closed" );
@@ -179,12 +207,12 @@ mod alpha {
     // AuthRule: power_omega
     pub fn veto(&mut self, proposal: u64) {
       assert!( proposal >= self.proposal_index, "veto on finalized proposal");
-      let ix = self.proposal_index - proposal;
+      let ix = proposal - self.proposal_index;
 
       let p = &self.proposals[ix as usize];
       
       assert!(
-        Clock::current_time_is_strictly_after( 
+        Clock::current_time_is_strictly_before( 
           p.1.add_days(self.alpha_vote_duration as i64).expect("failed to add days"), 
           TimePrecision::Minute ),
         "veto after closed" );
@@ -205,17 +233,17 @@ mod alpha {
           true
         }
       } 
-      let p = &self.proposals[0]; // fails if empty
+      let p = self.proposals[0].clone(); // fails if empty
       
       assert!(
-        Clock::current_time_is_strictly_before( 
+        Clock::current_time_is_strictly_after( 
           p.1.add_days(self.alpha_vote_duration as i64).expect("failed to add days"), 
           TimePrecision::Minute ),
         "finalize before closed" );
 
       match p.2 {
         (y,n,a) if y > n && is_quorate(&self.dao_addr, &self.alpha_vote_quorum, y+n+a) 
-          => self.execute_proposal(&p.0),
+          => self._execute_proposal(&p.0),
         _ => info!("proposal rejected")
       };
 
@@ -227,45 +255,58 @@ mod alpha {
       self.proposal_index += 1;
     }
 
-    // AuthRule: Power 0
-    pub fn to_nothing(&mut self) {
-      // completely rips apart any current proposals
-      // just because 
-
-      // only thing returned here would be the badges
-      // i.e. the ones this system cannot move
-      // i.e. here we *have to* assume 
-      // that they've already been pulled out
-      // and this is the last call in a sequence of actions
-      // that removed the powers from this Gov
-      // and has moved them to the next one already
-      // last cleanup being Power 1 removal from this
-      // i.e. there is nothing to return
-      // i.e. this function is a no-op
-      // i.e. the only changes need to be made 
-      // in the other components 
-      // notably Staking 
-    }
-
     // PRIVATE FUNCTIONS 
 
     // raw proposal execute logic
     // it better fucking grab the Component/Package into the fucking scope
-    fn execute_proposal(&self, prop: &Proposal) {
+    fn _execute_proposal(&mut self, prop: &Proposal) {
       match prop {
         Proposal::TextOnly(_) => (),
         Proposal::ActionSequence(v) => {
           for action in v {
-            self.execute_single_action(action);
+            self._execute_single_action(action);
           }
         }
       }
     }
 
     // eval
-    fn execute_single_action(&self, action: &Action) {
+    fn _execute_single_action(&mut self, action: &Action) {
       match action {
-        _ => ()
+        // Protocol actions
+        Action::ProtocolUpdateParams() => (), // TODO
+        Action::ProtocolUpdate() => (), // TODO
+
+        // EDAO actions
+        Action::EDaoAddProposal(edao_proposal) => {
+          let proof = self.power_alpha.create_proof();
+          Dao::at(self.dao_addr).add_proposal(edao_proposal.clone(), proof)
+        },
+        Action::EDaoVote(vote, proposal) => {
+          let proof = self.power_alpha.create_proof();
+          Dao::at(self.dao_addr).vote(*vote, *proposal, proof)
+        }, 
+
+        // Alpha actions 
+        Action::AlphaChangeParams(vote_duration, vote_quorum, proposal_payment) => {
+          self.alpha_vote_duration = *vote_duration;
+          self.alpha_vote_quorum = *vote_quorum;
+          self.alpha_proposal_payment = *proposal_payment;
+        },
+
+        // Delta actions 
+        Action::DeltaPuppeteer(delta_proposal) => 
+          self.power_alpha.authorize(||
+            Delta::at(
+              Dao::at(self.dao_addr).get_branch_addrs().1
+            ).puppeteer(delta_proposal.clone())
+        ),
+        Action::DeltaAllowSpend(asset, amount) => 
+          self.power_alpha.authorize(|| 
+            Delta::at(
+              Dao::at(self.dao_addr).get_branch_addrs().1
+            ).allow_spend(*asset, *amount)
+        )
       }
     }
   }

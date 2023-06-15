@@ -1,6 +1,8 @@
 use scrypto::prelude::*;
 use scrypto::blueprints::clock::TimePrecision;
 
+type BranchAddrs = (ComponentAddress, ComponentAddress, ComponentAddress);
+
 #[derive(ScryptoSbor, PartialEq, Clone)]
 pub enum Proposal {
   // gives power zero to it
@@ -10,6 +12,56 @@ pub enum Proposal {
   // gives superbadge to it
   // N/N consensus
   UpdateSelf(PackageAddress, String, String)
+}
+
+external_blueprint! {
+  Alpha {
+    fn from_nothing(
+      dao_addr: ComponentAddress,
+      power_zero: ResourceAddress,
+      power_alpha: Bucket,
+      power_omega: ResourceAddress,
+
+      gov_token: ResourceAddress,
+      alpha_vote_duration: u64,
+      alpha_vote_quorum: Option<Decimal>,
+      alpha_proposal_payment: Decimal
+      ) -> ComponentAddress;
+  }
+}
+
+external_blueprint! {
+  Delta {
+    fn from_nothing(
+      dao_addr: ComponentAddress,
+      power_zero: ResourceAddress,
+      power_delta: Bucket, 
+      power_alpha: ResourceAddress,
+
+      whitelist: Vec<(ResourceAddress, Decimal)>,
+      gov_token: ResourceAddress
+      ) -> ComponentAddress;
+  }
+}
+
+external_blueprint! {
+  Omega {
+    fn from_nothing(
+      dao_addr: ComponentAddress,
+      power_zero: ResourceAddress,
+      power_omega: Bucket, 
+      power_delta: ResourceAddress,
+
+      token: Bucket
+      ) -> ComponentAddress;
+  }
+}
+
+// yes, lol
+external_component! {
+  EDao {
+    fn set_branch_addrs(&mut self, new: BranchAddrs);
+  }
 }
 
 #[blueprint]
@@ -27,12 +79,26 @@ mod dao {
     proposal_index: u64, // current top index
 
     vote_duration: u64, // duration of votes in days before allowed to close 
+
+    branch_addrs: (ComponentAddress, ComponentAddress, ComponentAddress)
   }
 
   impl Dao {
     // speaks the word and creates the world
     // returns self addr, alpha addr, Delta addr, omega addr
-    pub fn from_nothing() -> (ComponentAddress, ResourceAddress) {
+    pub fn from_nothing(
+      package_alpha: PackageAddress,
+      alpha_vote_duration: u64,
+      alpha_vote_quorum: Option<Decimal>,
+      alpha_proposal_payment: Decimal,
+
+      package_delta: PackageAddress,
+
+      package_omega: PackageAddress,
+      token: Bucket,
+
+      xrd: ResourceAddress,
+    ) -> ComponentAddress {
       let dao_superbadge = Vault::with_bucket(ResourceBuilder::new_fungible()
         .mintable(rule!(deny_all), LOCKED)
         .burnable(rule!(deny_all), LOCKED)
@@ -54,20 +120,14 @@ mod dao {
           .restrict_deposit(
             rule!(require(dao_superbadge.resource_address())), LOCKED)
           .metadata("name", "EDAO POWER ZERO")
-          .create_with_no_initial_supply();
+          .mint_initial_supply(1);
 
-      let souls = 
+      let mut souls = 
         ResourceBuilder::new_string_non_fungible::<()>()
           .mintable(
             rule!(deny_all), LOCKED)
           .burnable(
             rule!(deny_all), LOCKED)
-          .recallable(
-            rule!(deny_all), LOCKED)
-          .restrict_withdraw(
-            rule!(require(power_zero)), LOCKED)
-          .restrict_deposit(
-            rule!(require(power_zero)), LOCKED)
           .metadata("name", "EDAO SOUL")
           .mint_initial_supply([
             ("alpha".try_into().unwrap(), ()),
@@ -79,19 +139,84 @@ mod dao {
       let proposal_index: u64 = 0;
       let vote_duration: u64 = 7;
 
-      let ca = Self {
+      let acc_rules = 
+        AccessRulesConfig::new()
+          .method("set_branch_addrs", 
+            rule!(require(power_zero.resource_address())), LOCKED)
+          .default(rule!(allow_all), LOCKED);
+
+      let bang = 
+        ComponentAddress::virtual_identity_from_public_key(
+          &PublicKey::EcdsaSecp256k1(
+            EcdsaSecp256k1PublicKey::from_str(
+              "0345495dce6516c31862d36d1d0b254fad29ab016b6d972ebac1dd3902a41b0f9b").unwrap()
+          )
+        );
+
+      let dao_addr = Self {
         dao_superbadge,
         souls: souls.resource_address(),
-        power_zero,
+        power_zero: power_zero.resource_address(),
         proposals,
         proposal_index,
-        vote_duration
-      }.instantiate().globalize();
+        vote_duration,
+        branch_addrs: (bang, bang, bang)
+      }
+      .instantiate()
+      .globalize_with_access_rules(acc_rules);
 
-      // TODO instantiate all 3 houses.
+      let power_alpha = souls.take_non_fungible(
+        &NonFungibleLocalId::string("alpha").unwrap());
+      let alpha_resource = power_alpha.resource_address();
       
-      (ca, power_zero)
+      let power_delta = souls.take_non_fungible(
+        &NonFungibleLocalId::string("Delta").unwrap());
+      let delta_resource = power_delta.resource_address();
 
+      let power_omega = souls.take_non_fungible(
+        &NonFungibleLocalId::string("omega").unwrap());
+
+      // yes this is necessary
+      souls.burn();
+
+      let alpha_addr = Alpha::at(package_alpha, "Alpha")
+        .from_nothing(
+          dao_addr,
+          power_zero.resource_address(),
+          power_alpha,
+          power_omega.resource_address(),
+
+          token.resource_address(),
+          alpha_vote_duration,
+          alpha_vote_quorum,
+          alpha_proposal_payment
+        );
+
+      let delta_addr = Delta::at(package_delta, "Delta")
+        .from_nothing(
+          dao_addr,
+          power_zero.resource_address(),
+          power_delta,
+          alpha_resource,
+          vec![(xrd, dec!(0)), (token.resource_address(), dec!(0))],
+          token.resource_address()
+        );
+
+      let omega_addr = Omega::at(package_omega, "Omega")
+        .from_nothing(
+          dao_addr,
+          power_zero.resource_address(),
+          power_omega,
+          delta_resource,
+          token
+        );
+
+      power_zero.authorize(|| 
+        EDao::at(dao_addr).set_branch_addrs((alpha_addr, delta_addr, omega_addr))
+      );
+      power_zero.burn();
+
+      dao_addr
     }
 
     // adds proposal and votes in favor of it
@@ -103,16 +228,15 @@ mod dao {
       self.proposals.push(payload);
     }
     
-
-    pub fn vote(&mut self, vote: bool, proposal: Proposal, proposal_idx: u64, proof: Proof) {
+    pub fn vote(&mut self, vote: bool, proposal: u64, proof: Proof) {
+      assert!( proposal >= self.proposal_index, "vote on finalized proposal");
+      let ix = self.proposal_index - proposal;
       // is eligible to vote
       let house = self._pass_proof(proof);
-      self._can_vote(&*house, proposal_idx);
+      self._can_vote(&*house, ix);
 
       // is the vote cast appropriately
-      let ix = self.proposal_index - proposal_idx;
       let p = &mut self.proposals[ix as usize];
-      assert!(proposal == p.0, "incoherence of proposals");
       assert!(
         Clock::current_time_is_strictly_before( 
           p.1.add_days(self.vote_duration as i64).expect("adding days failed"), 
@@ -144,6 +268,15 @@ mod dao {
 
       self.proposals.remove(0);
       self.proposal_index += 1;
+    }
+
+    pub fn get_branch_addrs(&self) -> BranchAddrs {
+      self.branch_addrs
+    }
+
+    // AuthRule: power_zero
+    pub fn set_branch_addrs(&mut self, new: BranchAddrs) {
+      self.branch_addrs = new;
     }
 
     // PRIVATE FUNCTIONS 
