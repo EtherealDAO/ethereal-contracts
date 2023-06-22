@@ -27,6 +27,10 @@ pub enum DeltaProposal {
 
 #[derive(ScryptoSbor, Clone)]
 pub enum Action {
+  // no-effect poll-only
+  // can have off-chain effects due to decisions
+  TextOnly(String),
+
   // Protocol (i.e. EtherealUSD actions)
   ProtocolUpdateParams(), // TODO
   ProtocolUpdate(), // TODO
@@ -67,16 +71,7 @@ external_component! {
   }
 }
 
-
-// Something 
-#[derive(ScryptoSbor, Clone)]
-pub enum Proposal {
-  // no-effect poll-only
-  // can have off-chain effects due to decisions
-  TextOnly(String),
-  // regular vote
-  ActionSequence(Vec<Action>),
-}
+type Proposal = Vec<Action>;
 
 #[derive(ScryptoSbor)]
 pub enum Vote {
@@ -171,6 +166,10 @@ mod alpha {
         payment.resource_address() == self.gov_token &&
         payment.amount() >= self.alpha_proposal_payment, 
         "incorrect payment for adding proposal");
+
+      // checks the size constraints
+      self._check_proposal(&proposal);
+
       Delta::at(Dao::at(self.dao_addr).get_branch_addrs().1).deposit(payment);
 
       self.proposals.push(
@@ -257,22 +256,97 @@ mod alpha {
 
     // PRIVATE FUNCTIONS 
 
+    // checks validity of proposal
+    // i.e. that data is correctly formed
+    // doesn't check for *existence of components*
+    // i.e. IT DOESN'T GUARANTEE IT CAN BE EXECUTED
+    // i.e. IF THERE's NO WAY to 'SKIP' execution in case it passes,
+    // there's a problem
+    fn _check_proposal(&self, prop: &Proposal) {
+      // why 13? I felt it appropriate
+      assert!(prop.len() <= 13, "proposal too long");
+
+      for action in prop {
+        self._check_single_action(action);
+      }
+    }
+
+    fn _check_single_action(&self, action: &Action) {
+      fn check_string(s: &str) {
+        // sha256 length
+        assert!(s.len() <= 64, "text too long")
+      }
+
+      // this *cannot* 
+      fn check_addr(a: &Addr) {
+        match a {
+          Ok(_) => (),
+          Err((_, s)) => check_string(&*s)
+        }
+      }
+
+      fn check_edao_proposal(p: &EDaoProposal) {
+        match p {
+          EDaoProposal::UpdateBranch(_, s1, s2) => {
+            check_string(&*s1);
+            check_string(&*s2);
+          },
+          EDaoProposal::UpdateSelf(_, s1, s2) => {
+            check_string(&*s1);
+            check_string(&*s2);
+          }
+        }
+      }
+
+      fn check_delta_proposal(p: &DeltaProposal) {
+        match p {
+          DeltaProposal::Spend(_, _, a, s) => {
+            check_addr(&a);
+            check_string(&*s);
+          },
+          DeltaProposal::Issue(_) => (),
+          DeltaProposal::Whitelist(_) => (),
+        
+          // Omega
+          DeltaProposal::OmegaVoteEDao(_, _) => (),
+        
+          // EDao actions
+          DeltaProposal::EDaoAddProposal(p) => check_edao_proposal(&p),
+          DeltaProposal::EDaoVote(_, _) => ()
+        }
+      }
+
+      match action {
+        Action::TextOnly(s) => check_string(&*s),
+        // Protocol actions
+        Action::ProtocolUpdateParams() => (), // TODO
+        Action::ProtocolUpdate() => (), // TODO
+
+        // EDAO actions
+        Action::EDaoAddProposal(p) => check_edao_proposal(&p),
+        Action::EDaoVote(_, _) => (),
+
+        // Alpha actions 
+        Action::AlphaChangeParams(_, _, _) => (),
+
+        // Delta actions 
+        Action::DeltaPuppeteer(p) => check_delta_proposal(&p),
+        Action::DeltaAllowSpend(_, _) => ()
+      }
+    }
+
     // raw proposal execute logic
     // it better fucking grab the Component/Package into the fucking scope
     fn _execute_proposal(&mut self, prop: &Proposal) {
-      match prop {
-        Proposal::TextOnly(_) => (),
-        Proposal::ActionSequence(v) => {
-          for action in v {
-            self._execute_single_action(action);
-          }
-        }
+      for action in prop {
+        self._execute_single_action(action);
       }
     }
 
     // eval
     fn _execute_single_action(&mut self, action: &Action) {
       match action {
+        Action::TextOnly(_) => (),
         // Protocol actions
         Action::ProtocolUpdateParams() => (), // TODO
         Action::ProtocolUpdate() => (), // TODO
