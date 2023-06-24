@@ -8,7 +8,7 @@ pub struct UserReceipt {
   #[mutable]
   lp_amount: Decimal,
   #[mutable]
-  top_voted_index: u64 
+  top_voted_index: u64
 }
 
 #[derive(ScryptoSbor)]
@@ -27,7 +27,7 @@ external_component! {
 
 external_component! {
   Alpha {
-    fn get_proposal_indices(&self) -> (u64, u64);
+    fn get_proposal_ongoing(&self, proposal: u64) -> Option<bool>;
     fn vote(&mut self, vote: Vote, proposal: u64);
   }
 }
@@ -205,9 +205,6 @@ mod omega {
         .non_fungible();
       let data = nft.data();
 
-      let (current_index, _) = 
-        Alpha::at(Dao::at(self.dao_addr).get_branch_addrs().0).get_proposal_indices();
-
       let id = match nft.local_id() {
         NonFungibleLocalId::UUID(uuid) => uuid.value(),
         _ => panic!("resource incoherence")
@@ -220,23 +217,26 @@ mod omega {
 
       if let Some(r) = self.vote_locks.get(&id) {
         let (ix, x) = *r;
-        if ix < current_index {
-          // not voted, not locked
-          self.vote_locks.insert(id, (ix, x - amount));
 
-          self.power_omega.authorize(|| 
-            borrow_resource_manager!(self.nft_resource)
-              .update_non_fungible_data(
-                &nft.local_id(),
-                "lp_amount",
-                data.lp_amount - amount
-              )
-          );
+        let gpo = Alpha::at(Dao::at(self.dao_addr).get_branch_addrs().0)
+          .get_proposal_ongoing(ix);
 
-          return self.staked_vault.take(amount);
-        } else {
-          // locked 
-          panic!("unstake after vote");
+        match gpo {
+          Some(true) => panic!("unstake after vote"),
+          _ => {
+            self.vote_locks.insert(id, (ix, x - amount));
+
+            self.power_omega.authorize(|| 
+              borrow_resource_manager!(self.nft_resource)
+                .update_non_fungible_data(
+                  &nft.local_id(),
+                  "lp_amount",
+                  data.lp_amount - amount
+                )
+            );
+  
+            return self.staked_vault.take(amount);
+          }
         }
       } else {
         // no stake
@@ -253,9 +253,6 @@ mod omega {
         .non_fungible();
       let data = nft.data();
 
-      let (_, last_index) = 
-        Alpha::at(Dao::at(self.dao_addr).get_branch_addrs().0).get_proposal_indices();
-
       let id = match nft.local_id() {
         NonFungibleLocalId::UUID(uuid) => uuid.value(),
         _ => panic!("resource incoherence")
@@ -263,12 +260,16 @@ mod omega {
 
       if let Some(r) = self.vote_locks.get(&id) {
         let (ix, x) = *r; 
+
         // user forefits the right to vote on prior proposals
         if ix < proposal {
           // not voted, not locked
 
+          let gpo = Alpha::at(Dao::at(self.dao_addr).get_branch_addrs().0)
+            .get_proposal_ongoing(ix);
+
           // check to avoid malicious/mistaken frontends
-          assert!( ix < last_index, "vote on non existing proposal");
+          assert!( gpo == Some(true), "vote on non existent or finalized proposal");
 
           // TODO could just remove this as an arg and 
           // just create it here

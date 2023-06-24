@@ -74,8 +74,8 @@ mod dao {
     power_zero: ResourceAddress,
 
     // active proposals
-    proposals: Vec<(Proposal, Instant, 
-      (Vec<String>, Vec<String>))>,
+    proposals: KeyValueStore<u64, Option<(Proposal, Instant, 
+      (Vec<String>, Vec<String>))> >,
     proposal_index: u64, // current top index
 
     vote_duration: u64, // duration of votes in days before allowed to close 
@@ -135,7 +135,7 @@ mod dao {
             ("omega".try_into().unwrap(), ())
           ]);
 
-      let proposals = vec![];
+      let proposals = KeyValueStore::new();
       let proposal_index: u64 = 0;
       let vote_duration: u64 = 7;
 
@@ -225,49 +225,61 @@ mod dao {
       let payload = (proposal, Clock::current_time_rounded_to_minutes(), 
         (vec![house.to_owned()], vec![]) );
       
-      self.proposals.push(payload);
+      self.proposals.insert(self.proposal_index, Some(payload));
+      self.proposal_index += 1;
+    }
+
+    // Some(true) - exists and ongoing
+    // Some(false) - exists but finalized
+    // Nothing - never existed
+    pub fn get_proposal_ongoing(&self, proposal: u64) -> Option<bool> {
+      self.proposals.get(&proposal).map(|x| x.is_some())
     }
     
     pub fn vote(&mut self, vote: bool, proposal: u64, proof: Proof) {
-      assert!( proposal >= self.proposal_index, "vote on finalized proposal");
-      let ix = self.proposal_index - proposal;
       // is eligible to vote
       let house = self._pass_proof(proof);
-      self._can_vote(&*house, ix);
+      self._can_vote(&*house, proposal);
 
       // is the vote cast appropriately
-      let p = &mut self.proposals[ix as usize];
+      let mut p = self.proposals.get_mut(&proposal)
+        .expect("non existent proposal");
+
       assert!(
         Clock::current_time_is_strictly_before( 
-          p.1.add_days(self.vote_duration as i64).expect("adding days failed"), 
+          p.as_ref().unwrap().1.add_days(self.vote_duration as i64).expect("adding days failed"), 
           TimePrecision::Minute ),
         "vote after closed" );
 
       if vote {
-        p.2.0.push(house)
+        p.as_mut().unwrap().2.0.push(house)
       } else {
-        p.2.1.push(house)
+        p.as_mut().unwrap().2.1.push(house)
       };
     }
 
-    pub fn finalize_proposal(&mut self) {
+    pub fn finalize_proposal(&mut self, proposal: u64) {
+      let mut p = self.proposals.get_mut(&proposal)
+        .expect("proposal does not exit");
 
-      let p = self.proposals[0].clone(); // fails if empty
-      let voted_in_favor = p.2.0.len();
-      let voted = voted_in_favor + p.2.1.len();
+      let voted_in_favor = p.clone().unwrap().2.0.len();
+      let voted = voted_in_favor + p.clone().unwrap().2.1.len();
       let is_after_close = Clock::current_time_is_strictly_after( 
-        p.1.add_days(self.vote_duration as i64).expect("adding days failed"), 
+        p.as_ref().unwrap().1.add_days(self.vote_duration as i64).expect("adding days failed"), 
         TimePrecision::Minute);
 
-      match p.0 {
-        Proposal::UpdateBranch(_,_,_) if voted_in_favor >= 2 => self._execute_proposal(&p.0),
-        Proposal::UpdateSelf(_,_,_) if voted_in_favor == 3 => self._execute_proposal(&p.0),
+      match p.as_ref() {
+        Some((p @ Proposal::UpdateBranch(_,_,_), _, _)) 
+          if voted_in_favor >= 2 => self._execute_proposal(&p),
+
+        Some((p @ Proposal::UpdateSelf(_,_,_), _, _)) 
+          if voted_in_favor == 3 => self._execute_proposal(&p),
+
         _ if is_after_close || voted == 3 => (),
         _ => panic!("vote still ongoing")
-      }
+      };
 
-      self.proposals.remove(0);
-      self.proposal_index += 1;
+      *p = None;
     }
 
     pub fn get_branch_addrs(&self) -> BranchAddrs {
@@ -295,7 +307,13 @@ mod dao {
     }
 
     fn _can_vote(&self, house: &str, ix: u64) {
-      let (f, a) = &self.proposals[ix as usize].2;
+      let b = &self.proposals.get(&ix)
+        .expect("proposal doesn't exit");
+        
+      let (f, a) = &b
+        .as_ref()
+        .expect("proposal finalized").2;
+
       for v in f {
         if v == house {
           panic!("double vote");

@@ -92,8 +92,10 @@ mod alpha {
     // over proposal veto and vote power
     power_omega: ResourceAddress,
 
-    // active proposals
-    proposals: Vec<(Proposal, Instant, (Decimal, Decimal, Decimal))>,
+    // proposals
+    // None means it was finalized (or veto'd)
+    proposals: KeyValueStore<u64, Option<(Proposal, Instant, 
+      (Decimal, Decimal, Decimal))> >,
     proposal_index: u64, // current top index
 
     gov_token: ResourceAddress, // $REAL
@@ -136,7 +138,7 @@ mod alpha {
         power_alpha: Vault::with_bucket(power_alpha),
         power_omega,
 
-        proposals: vec![],
+        proposals: KeyValueStore::new(),
         proposal_index: 1u64,
 
         gov_token,
@@ -153,11 +155,15 @@ mod alpha {
     pub fn to_nothing(&mut self) -> Bucket {
       self.power_alpha.take_all()
       // TODO block calls if the soul was ripped out
+      // ...but why?
     }
 
-    // omega needs this
-    pub fn get_proposal_indices(&self) -> (u64, u64) {
-      (self.proposal_index, self.proposal_index + self.proposals.len() as u64)
+    // omega-optimized call
+    // Some(true) - exists and ongoing
+    // Some(false) - exists but finalized
+    // Nothing - never existed
+    pub fn get_proposal_ongoing(&self, proposal: u64) -> Option<bool> {
+      self.proposals.get(&proposal).map(|x| x.is_some())
     }
 
     // adds proposal to internal list of vote-able proposals
@@ -170,61 +176,62 @@ mod alpha {
       // checks the size constraints
       self._check_proposal(&proposal);
 
+      // pay create proposal fee to treasury
       Delta::at(Dao::at(self.dao_addr).get_branch_addrs().1).deposit(payment);
 
-      self.proposals.push(
-        (proposal, 
-        Clock::current_time_rounded_to_minutes(),
-        (dec!(0), dec!(0), dec!(0))));
+      self.proposals.insert(
+        self.proposal_index,
+        Some(( 
+          proposal, 
+          Clock::current_time_rounded_to_minutes(),
+          (dec!(0), dec!(0), dec!(0))
+        ))
+      );
+
+      self.proposal_index += 1;
     }
 
     // AuthRule: power_omega
     // this call is trusted, alpha only aggregates the calls
     pub fn vote(&mut self, vote: Vote, proposal: u64) {
-      assert!( proposal >= self.proposal_index, "veto on finalized proposal");
-      let ix = proposal - self.proposal_index;
+      assert!( self.get_proposal_ongoing(proposal) == Some(true), 
+        "vote on finalized or nonexistent proposal");
 
-      let p = &self.proposals[ix as usize];
-      assert!( p.2.0 >= dec!(0), "proposal veto'd");
+      let mut p = self.proposals.get_mut(&proposal).expect("proposal non existent");
 
       assert!(
         Clock::current_time_is_strictly_before( 
-          p.1.add_days(self.alpha_vote_duration as i64).expect("failed to add days"), 
+          p.as_ref().unwrap().1.add_days(self.alpha_vote_duration as i64).expect("failed to add days"), 
           TimePrecision::Minute ),
         "vote after closed" );
-
-      let new = match vote {
-        Vote::For(x) if x > dec!(0) => (p.2.0 + x, p.2.1, p.2.2),
-        Vote::Against(x) if x > dec!(0) => (p.2.0, p.2.1 + x, p.2.2),
-        Vote::Abstain(x) if x > dec!(0) => (p.2.0, p.2.1, p.2.2 + x),
+      
+      match vote {
+        Vote::For(x) if x > dec!(0) => p.as_mut().unwrap().2.0 += x,
+        Vote::Against(x) if x > dec!(0) => p.as_mut().unwrap().2.1 += x,
+        Vote::Abstain(x) if x > dec!(0) => p.as_mut().unwrap().2.2 += x,
         _ => panic!("nonpositive vote")
       };
-
-      self.proposals[ix as usize] = (p.0.clone(), p.1, new);
     }
     
     // AuthRule: power_omega
     pub fn veto(&mut self, proposal: u64) {
-      assert!( proposal >= self.proposal_index, "veto on finalized proposal");
-      let ix = proposal - self.proposal_index;
+      assert!( self.get_proposal_ongoing(proposal) == Some(true), 
+        "veto on finalized or nonexistent proposal");
 
-      let p = &self.proposals[ix as usize];
+      let mut p = self.proposals.get_mut(&proposal).expect("proposal non existent");
       
       assert!(
         Clock::current_time_is_strictly_before( 
-          p.1.add_days(self.alpha_vote_duration as i64).expect("failed to add days"), 
+          p.as_ref().unwrap().1.add_days(self.alpha_vote_duration as i64).expect("failed to add days"), 
           TimePrecision::Minute ),
         "veto after closed" );
       
-      // veto state
-      let new = (dec!(-1), dec!(0), dec!(0));
-      
-      self.proposals[ix as usize] = (p.0.clone(), p.1, new);
+      *p = None;
     }
 
     // either executes a proposal or not, depending on result
     // and then removes it out of the internal list 
-    pub fn finalize_proposal(&mut self) {
+    pub fn finalize_proposal(&mut self, proposal: u64) {
       fn is_quorate(daoa: &ComponentAddress, qu: &Option<Decimal>, v: Decimal) -> bool {
         if let Some(q) = *qu {
           v / Omega::at(Dao::at(*daoa).get_branch_addrs().2).get_issued() > q
@@ -232,26 +239,31 @@ mod alpha {
           true
         }
       } 
-      let p = self.proposals[0].clone(); // fails if empty
+      
+      let mut p = self.proposals.get_mut(&proposal).expect("proposal non existent");
       
       assert!(
         Clock::current_time_is_strictly_after( 
-          p.1.add_days(self.alpha_vote_duration as i64).expect("failed to add days"), 
+          p.as_ref().expect("finalize on finalized").1
+            .add_days(self.alpha_vote_duration as i64).expect("failed to add days"), 
           TimePrecision::Minute ),
         "finalize before closed" );
+ 
+      // execute if passed
+      p.clone().map(|(_,_,(y,n,a))| {
+        if y > n && is_quorate(&self.dao_addr, &self.alpha_vote_quorum, y+n+a) {
+          self._execute_proposal(&p.clone().unwrap().0);
+        } else { 
+          info!("proposal rejected");
+        }
+      });
 
-      match p.2 {
-        (y,n,a) if y > n && is_quorate(&self.dao_addr, &self.alpha_vote_quorum, y+n+a) 
-          => self._execute_proposal(&p.0),
-        _ => info!("proposal rejected")
-      };
+      // set proposal as finalized
+      *p = None;
 
       // note: in future might want to add custom thresholds
       // for different actions i.e. higher for more important
       // initially everything is a majority win
-      
-      self.proposals.remove(0);
-      self.proposal_index += 1;
     }
 
     // PRIVATE FUNCTIONS 
