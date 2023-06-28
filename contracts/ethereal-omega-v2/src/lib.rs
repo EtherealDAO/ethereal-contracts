@@ -32,6 +32,9 @@ external_component! {
   }
 }
 
+
+// V1 -> V2 only difference is allowing 
+// unREAL staking / stake locking 
 #[blueprint]
 mod omega {
   struct Omega {
@@ -48,7 +51,7 @@ mod omega {
     token: Vault,
     token_issued: Decimal,
 
-    // this is V1 so REAL only
+    // this is V2 so resource = tri lp
     staked_resource: ResourceAddress,
     staked_vault: Vault,
 

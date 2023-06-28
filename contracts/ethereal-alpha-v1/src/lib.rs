@@ -31,9 +31,13 @@ pub enum Action {
   // can have off-chain effects due to decisions
   TextOnly(String),
 
-  // Protocol (i.e. EtherealUSD actions)
-  ProtocolUpdateParams(), // TODO
-  ProtocolUpdate(), // TODO
+  // Protocol actions (DEX and USD)
+  ProtocolDexStartStop(),
+  ProtocolDexUpdate(),
+
+  ProtocolUsdStartStop(),
+  ProtocolUsdUpdate(),
+  ProtocolUsdChangeParams(),
 
   // EDAO actions
   EDaoAddProposal(EDaoProposal),
@@ -71,6 +75,12 @@ external_component! {
   }
 }
 
+external_component! {
+  Dex {
+    fn start_stop(&mut self, input: bool);
+  }
+}
+
 type Proposal = Vec<Action>;
 
 #[derive(ScryptoSbor)]
@@ -105,8 +115,11 @@ mod alpha {
     alpha_vote_duration: u64, // duration of votes in days before allowed to close 
     // TODO: Q: quorum vs pass threshold (different for differnt actions?)
     alpha_vote_quorum: Option<Decimal>, // minimum % participation before considered quorate
-    alpha_proposal_payment: Decimal // in gov token, to submit proposal
+    alpha_proposal_payment: Decimal, // in gov token, to submit proposal
 
+    // addresses of the protocols
+    alpha_usd_ca: ComponentAddress,
+    alpha_dex_ca: ComponentAddress
   }
 
   impl Alpha {
