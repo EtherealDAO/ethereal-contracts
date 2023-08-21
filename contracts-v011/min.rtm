@@ -1,0 +1,8 @@
+CALL_METHOD
+  Address("account_sim1cyd08zuxt0kmuddmwlagas6g8g4x65w2sd4dfncfp7dha8augly08k")
+  "lock_fee"
+  Decimal("10");
+
+CALL_METHOD
+  Address("component_sim1cqurxg5xxvck4t7wngnndzu6dnh7qzlcfc3scaap6kcpkfd0f6u39y")
+  "flash_mint_start"

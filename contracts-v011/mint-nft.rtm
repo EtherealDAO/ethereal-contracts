@@ -1,0 +1,15 @@
+CALL_METHOD
+  Address("account_sim1cyd08zuxt0kmuddmwlagas6g8g4x65w2sd4dfncfp7dha8augly08k")
+  "lock_fee"
+  Decimal("10");
+
+MINT_NON_FUNGIBLE
+  Address("resource_sim1n2tg08yl3azzcdljqndd58y33hvcwr4yhqraxzkf2kes5fusr5hz6j")
+  Map<NonFungibleLocalId, Tuple>(
+      NonFungibleLocalId("#8#") => Tuple(Tuple())
+  );
+
+CALL_METHOD
+  Address("account_sim1cyd08zuxt0kmuddmwlagas6g8g4x65w2sd4dfncfp7dha8augly08k")
+  "deposit_batch"
+  Expression("ENTIRE_WORKTOP");
