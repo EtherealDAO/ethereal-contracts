@@ -1,0 +1,16 @@
+CALL_METHOD
+    Address("component_sim1q0kryz5scup945usk39qjc2yjh6l5zsyuh8t7v5pk0tshjs68x")
+    "lock_fee"
+    Decimal("100");
+CREATE_FUNGIBLE_RESOURCE_WITH_INITIAL_SUPPLY
+    18u8
+    Map<String, String>(
+        "name", "EthrealDAO Governance Token", 
+        "symbol", "REAL",
+        "description", "Governance Token over EDAO")
+    Map<Enum, Tuple>(Enum(4u8), Tuple(Enum(0u8), Enum(1u8)))
+    Decimal("1000000000");
+CALL_METHOD
+    Address("account_sim1q3q29srzekm8a0gn6ufcj03kvxsemkkna690r8rxatzs3cgwrs")
+    "deposit_batch"
+    Expression("ENTIRE_WORKTOP");
