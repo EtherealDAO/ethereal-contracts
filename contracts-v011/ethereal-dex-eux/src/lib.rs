@@ -1,14 +1,15 @@
 use scrypto::prelude::*;
 
 #[blueprint]
-mod dex {
+mod eux {
   // OWNER is Alpha
   enable_method_auth! {
     roles {
       alpha => updatable_by: [];
+      azero => updatable_by: [];
     },
     methods {
-      to_nothing => restrict_to: [alpha];
+      to_nothing => restrict_to: [azero];
       first_deposit => restrict_to: [alpha];
       start_stop => restrict_to: [alpha];
       add_liquidity => PUBLIC;
@@ -23,22 +24,22 @@ mod dex {
     }
   }
 
-  struct Dex {
-    eusd_addr: ComponentAddress,
-    power_dex: Vault,
+  struct Eux {
+    alpha_addr: ComponentAddress,
+    power_eux: Vault,
     pool: (Vault, Vault),
     pool_lp: (ResourceAddress, Decimal),
     swap_fee: Decimal,
     stopped: bool
   }
 
-  impl Dex {
+  impl Eux {
     // 50/50 dao-managed 
     // EUXLP is to be considered a 
-    pub fn from_nothing(eusd_addr: ComponentAddress, 
-      power_alpha: ResourceAddress, power_dex: Bucket, 
+    pub fn from_nothing(alpha_addr: ComponentAddress, 
+      power_alpha: ResourceAddress, power_azero: ResourceAddress, power_eux: Bucket, 
       t1: ResourceAddress, t2: ResourceAddress,
-      swap_fee: Decimal )-> Global<Dex> {
+      swap_fee: Decimal )-> (ComponentAddress, ResourceAddress) {
 
       // assumed order: EUSD is t1
       // and EXRD is t2
@@ -47,7 +48,7 @@ mod dex {
         "fee must be smaller than 10% and positive");
 
       let lp_ra: ResourceAddress = ResourceBuilder::new_fungible(
-          OwnerRole::Fixed(rule!(require(power_dex.resource_address()))))
+          OwnerRole::Fixed(rule!(require(power_eux.resource_address()))))
         .metadata(metadata!(
             init {
                 "name" => "Ethereal EUSD/EXRD LP", locked;
@@ -55,20 +56,20 @@ mod dex {
             }
         ))
         .burn_roles(burn_roles!(
-          burner => rule!(require(power_dex.resource_address()));
+          burner => rule!(require(power_eux.resource_address()));
           burner_updater => rule!(deny_all);
         ))
         .mint_roles(mint_roles!(
-          minter => rule!(require(power_dex.resource_address()));
+          minter => rule!(require(power_eux.resource_address()));
           minter_updater => rule!(deny_all);
         ))  
         .create_with_no_initial_supply()
         .address();
 
       let pool = (Vault::new(t1), Vault::new(t2));
-      Self {
-        eusd_addr,
-        power_dex: Vault::with_bucket(power_dex),
+      let a1 = Self {
+        alpha_addr,
+        power_eux: Vault::with_bucket(power_eux),
         pool,
         pool_lp: (lp_ra, dec!(0)),
         swap_fee,
@@ -78,10 +79,14 @@ mod dex {
       .prepare_to_globalize(OwnerRole::None)
       .roles(
         roles!(
+          azero => rule!(require(power_azero));
           alpha => rule!(require(power_alpha));
         )
       )
       .globalize()
+      .address();
+
+      return (a1, lp_ra)
     }
 
     // AuthRule: power_zero
@@ -93,7 +98,7 @@ mod dex {
     // separated from instantiation for dao reasons
     // separateed from add_liquidity for efficiency reasons
     pub fn first_deposit(&mut self, b1: Bucket, b2: Bucket) -> (Bucket, Option<Bucket>) {
-      assert!( !self.stopped && !self.power_dex.is_empty(),
+      assert!( !self.stopped && !self.power_eux.is_empty(),
         "DEX stopped or empty"); 
 
       assert!( self.pool.0.amount() == dec!(0),
@@ -103,7 +108,7 @@ mod dex {
       self.pool.0.put(b1);
       self.pool.1.put(b2);
 
-      Self::authorize(&mut self.power_dex, ||
+      Self::authorize(&mut self.power_eux, ||
         (ResourceManager::from(self.pool_lp.0).mint(dec!(10)), None)
       )
     }
@@ -117,7 +122,7 @@ mod dex {
     // adds all three, basing it on the REAL deposit for correct proportion
     // does not return excess liquidity, just 'swap-balances' them out
     pub fn add_liquidity(&mut self, b1: Bucket, b2: Bucket) -> (Bucket, Option<Bucket>) {
-      assert!( !self.stopped && !self.power_dex.is_empty(),
+      assert!( !self.stopped && !self.power_eux.is_empty(),
         "DEX stopped or empty"); 
 
       let amnt1 = b1.amount() / self.pool.0.amount();
@@ -133,7 +138,7 @@ mod dex {
         self.pool.1.put(b2);
 
         return (
-          Self::authorize(&mut self.power_dex, 
+          Self::authorize(&mut self.power_eux, 
             || ResourceManager::from(self.pool_lp.0).mint(minted)),
           Some(self.pool.0.take(rem))
         )
@@ -148,7 +153,7 @@ mod dex {
         self.pool.1.put(b2);
 
         return (
-          Self::authorize(&mut self.power_dex, 
+          Self::authorize(&mut self.power_eux, 
             || ResourceManager::from(self.pool_lp.0).mint(minted)),
           Some(self.pool.1.take(rem))
         )
@@ -161,7 +166,7 @@ mod dex {
         self.pool.1.put(b2);
 
         return (
-          Self::authorize(&mut self.power_dex, 
+          Self::authorize(&mut self.power_eux, 
             || ResourceManager::from(self.pool_lp.0).mint(minted)),
           None
         )
@@ -177,7 +182,7 @@ mod dex {
 
       let per = input.amount() / self.pool_lp.1;
       self.pool_lp.1 -= input.amount();
-      Self::authorize(&mut self.power_dex, 
+      Self::authorize(&mut self.power_eux, 
         || ResourceManager::from(self.pool_lp.0).burn(input));
 
       return (
@@ -206,54 +211,89 @@ mod dex {
       }
     }
 
-    fn perform_aa(&mut self) -> Option<(Bucket, Option<Bucket>)> {
-      let eusd: Global<AnyComponent> = self.eusd_addr.into();
-      if let Some((target, direction)) = eusd.call_raw::<Option<(Decimal, bool)>>
-        ("aa_poke", scrypto_args!(self.spot_price())) {
-        if let Some(sizehalf) = self.in_given_price(target, direction) {
+    fn perform_aa(&mut self) {
+      let (eusd, _, _) = 
+        self.alpha_addr.call_raw::<(ComponentAddress, ComponentAddress, ComponentAddress)>(
+          "get_app_addrs", scrypto_args!()
+        );
 
-          let mut input1 = Self::authorize(&mut self.power_dex, || { 
-            // todo make it an alpha lookup
-            eusd.call_raw::<Bucket>("aa_woke", scrypto_args!(sizehalf, direction))
+      // assumes the oracle on USD side was rescaled to EXRD from XRD
+      if let Some((target, oracle, direction)) = eusd.call_raw::<Option<(Decimal, Decimal, bool)>>
+        ("aa_poke", scrypto_args!(self.spot_price())) {
+        if let Some(size) = self.in_given_price(target, direction) {
+
+          let mut input1 = Self::authorize(&mut self.power_eux, || { 
+            eusd.call_raw::<Bucket>("aa_woke", scrypto_args!(size, direction))
           });
-          let input2 = self.internal_swap(input1.take(sizehalf));
-          let (out, rem) = if direction {
-            self.add_liquidity(input1, input2)
+          let available = input1.amount();
+
+          let mut ret = self.internal_swap(input1);
+          
+          let profit = if direction {
+            // reprice the sold EUSD at the oracle price 
+            let repriced = dec!("1") / oracle * available; 
+
+            // profit of treasury, in EXRD
+            let profit = input2.take(input2.amount() - repriced);
+            
+            // r1 ~ EUSD
+            let r1 = self.internal_swap(profit.take(profit.amount()/dec!("2")));
+            let (lp, rem) = self.add_liquidity(profit, r1);
+            if let Some(r1p) = rem {
+              // rem will be EUSD
+              // since the swap for it sold EXRD
+              self.pool.0.put(r1p);
+            };
+
+            lp
           } else {
-            self.add_liquidity(input2, input1)
+            // reprice the sold EXRD at the oracle price 
+            let repriced = oracle * available; 
+
+            // profit of treasury, in EUSD
+            let profit = input2.take(input2.amount() - repriced);
+
+            // r1 ~ EXRD
+            let r1 = self.internal_swap(profit.take(profit.amount()/dec!("2")));
+            let (lp, rem) = self.add_liquidity(profit, r1);
+            if let Some(r1p) = rem {
+              // rem will be EXRD
+              self.pool.1.put(r1p);
+            };
+
+            lp
           };
 
-          return Some((out, rem)) // todo aa_choke
+          eusd.call_raw::<()>("aa_choke", scrypto_args!(ret, profit, direction)); 
         }
       }
-      return None
     }
 
     // todo aa_choke cleanup
-    pub fn swap(&mut self, input: Bucket) -> (Bucket, Option<(Bucket, Option<Bucket>)>, Option<(Bucket, Option<Bucket>)>) {
-      assert!( !self.stopped && !self.power_dex.is_empty(),
+    pub fn swap(&mut self, input: Bucket) -> (Bucket, Option<(Bucket, Bucket)>, Option<(Bucket, Bucket)>) {
+      assert!( !self.stopped && !self.power_eux.is_empty(),
         "DEX stopped or empty"); 
 
       // pre-swap
-      let ret2 = self.perform_aa();
+      self.perform_aa();
 
       // swap
       let ret = self.internal_swap(input);
 
       // post-swap
-      let ret3 = self.perform_aa();
+      self.perform_aa();
 
-      return (ret, ret2, ret3)
+      return ret
     }
 
     // internal
 
-    fn authorize<F: FnOnce() -> O, O>(power_dex: &mut Vault, f: F) -> O {
-      let temp = power_dex.as_fungible().take_all();
+    fn authorize<F: FnOnce() -> O, O>(power_eux: &mut Vault, f: F) -> O {
+      let temp = power_eux.as_fungible().take_all();
       let ret = temp.authorize_with_all(|| {
         f()
       });
-      power_dex.put(temp.into());
+      power_eux.put(temp.into());
       return ret
     }
 

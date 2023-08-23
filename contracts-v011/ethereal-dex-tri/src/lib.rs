@@ -2,14 +2,15 @@ use scrypto::prelude::*;
 use scrypto_math::*;
 
 #[blueprint]
-mod dex {
+mod tri {
   // OWNER is Alpha
   enable_method_auth! {
     roles {
       alpha => updatable_by: [];
+      azero => updatable_by: [];
     },
     methods {
-      to_nothing => restrict_to: [alpha];
+      to_nothing => restrict_to: [azero];
       first_deposit => restrict_to: [alpha];
       start_stop => restrict_to: [alpha];
       add_liquidity => PUBLIC;
@@ -23,21 +24,25 @@ mod dex {
     }
   }
 
-  struct Dex {
-    power_alpha: ResourceAddress,
-    power_dex: Vault,
+  struct Tri {
+    alpha_addr: ComponentAddress,
+
+    power_tri: Vault,
+
     resources: ((ResourceAddress, Decimal), (ResourceAddress, Decimal)),
     pool: Global<TwoResourcePool>,
     swap_fee: Decimal,
     stopped: bool
   }
 
-  impl Dex {
+  impl Tri {
     // instantiates the TriPool, 
     // starting it as 'stopped'
-    pub fn from_nothing(power_alpha: ResourceAddress, power_dex: Bucket, 
+    pub fn from_nothing(alpha_addr: ComponentAddress, 
+      power_alpha: ResourceAddress, power_azero: ResourceAddress,
+      power_tri: Bucket, 
       t1: ResourceAddress, t1w: Decimal, t2: ResourceAddress, t2w: Decimal,
-      swap_fee: Decimal )-> Global<Dex> {
+      swap_fee: Decimal )-> (ComponentAddress, ResourceAddress) {
      
       assert!( t1w + t2w == dec!("1") && t1w > dec!("0") && t2w > dec!("0"), 
         "weights must sum to 1 and both be positive");
@@ -47,26 +52,32 @@ mod dex {
 
       let pool = Blueprint::<TwoResourcePool>::instantiate(
         OwnerRole::Fixed(rule!(require(power_alpha))),
-        rule!(require(power_dex.resource_address())),
+        rule!(require(power_tri.resource_address())),
         (t1, t2),
       );
 
-      Self {
-        power_alpha,
-        power_dex: Vault::with_bucket(power_dex),
+      let lp_ra = pool.get_metadata("pool_unit").expect("incoherence")
+
+      let a1 = Self {
+        alpha_addr,
+        power_tri: Vault::with_bucket(power_tri),
         resources: ((t1, t1w), (t2, t2w)),
         pool,
         swap_fee,
-        stopped: false
+        stopped: true
       }
       .instantiate()
       .prepare_to_globalize(OwnerRole::None)
       .roles(
         roles!(
           alpha => rule!(require(power_alpha));
+          azero => rule!(require(power_azero));
         )
       )
       .globalize()
+      .resource();
+
+      return (a1, lp_ra)
     }
 
 
@@ -84,19 +95,19 @@ mod dex {
     // the TriPool's TLP is managed by the native component
     // so the liquidity is left alone
     pub fn to_nothing(&mut self) -> Bucket {
-      self.power_dex.take_all()
+      self.power_tri.take_all()
     }
 
     // separated from instantiation for dao reasons
     // separateed from add_liquidity for efficiency reasons
     pub fn first_deposit(&mut self, b1: Bucket, b2: Bucket) -> (Bucket, Option<Bucket>) {
-      assert!( !self.stopped && !self.power_dex.is_empty(),
+      assert!( !self.stopped && !self.power_tri.is_empty(),
         "DEX stopped or empty"); 
 
       assert!( *self.vault_reserves().iter().next().expect("incoherence").1 == dec!(0),
         "first deposit into an already running pool");
 
-      Self::authorize(&mut self.power_dex, ||
+      Self::authorize(&mut self.power_tri, ||
         self.pool.contribute((b1, b2))
       )
     }
@@ -110,10 +121,10 @@ mod dex {
     // adds all three, basing it on the REAL deposit for correct proportion
     // does not return excess liquidity, just 'swap-balances' them out
     pub fn add_liquidity(&mut self, b1: Bucket, b2: Bucket) -> (Bucket, Option<Bucket>) {
-      assert!( !self.stopped && !self.power_dex.is_empty(),
+      assert!( !self.stopped && !self.power_tri.is_empty(),
         "DEX stopped or empty"); 
 
-      Self::authorize(&mut self.power_dex, ||
+      Self::authorize(&mut self.power_tri, ||
         self.pool.contribute((b1, b2))
       )
     }
@@ -127,7 +138,7 @@ mod dex {
 
     // no slippage limit, can set it in the manifest
     pub fn swap(&mut self, input: Bucket) -> Bucket {
-      assert!( !self.stopped && !self.power_dex.is_empty(),
+      assert!( !self.stopped && !self.power_tri.is_empty(),
         "DEX stopped or empty"); 
 
       let size_in = input.amount() * (dec!("1") - self.swap_fee);
@@ -152,7 +163,7 @@ mod dex {
             .pow((dec!("1") - w_out) / w_out).expect("power incoherence") 
         );
 
-      Self::authorize(&mut self.power_dex, || {
+      Self::authorize(&mut self.power_tri, || {
         self.pool.protected_deposit(input);
         self.pool.protected_withdraw(ra_out, size_out, 
           WithdrawStrategy::Rounded(RoundingMode::ToZero))
@@ -161,12 +172,12 @@ mod dex {
 
     // internal
 
-    fn authorize<F: FnOnce() -> O, O>(power_dex: &mut Vault, f: F) -> O {
-      let temp = power_dex.as_fungible().take_all();
+    fn authorize<F: FnOnce() -> O, O>(power_tri: &mut Vault, f: F) -> O {
+      let temp = power_tri.as_fungible().take_all();
       let ret = temp.authorize_with_all(|| {
         f()
       });
-      power_dex.put(temp.into());
+      power_tri.put(temp.into());
       return ret
     }
 
@@ -194,6 +205,7 @@ mod dex {
 
 
     // lookup spot price between the assets
+    // todo check if it's REAL/EUXLP or the other way round
     pub fn spot_price(&self) -> Decimal {
       let reserves = self.vault_reserves();
 

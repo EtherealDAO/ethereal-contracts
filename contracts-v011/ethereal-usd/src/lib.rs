@@ -17,7 +17,7 @@ mod usd {
       dex => updatable_by: [alpha]; // temporary measure, TODO: alpha + delpoy braider
     },
     methods {
-      to_nothing => restrict_to: [alpha];
+      to_nothing => restrict_to: [alpha]; //todo alpha's power zero
       start_stop => restrict_to: [alpha];
       aa_poke => PUBLIC;
       aa_woke => restrict_to: [dex];
@@ -36,10 +36,8 @@ mod usd {
   }
 
   struct Usd {
-//    alpha_addr: ComponentAddress,
+    alpha_addr: ComponentAddress,
 
-    power_alpha: ResourceAddress,
-    power_dex: ResourceAddress,
     power_usd: Vault,
 
     // eusd
@@ -69,11 +67,11 @@ mod usd {
   }
 
   impl Usd {
-    pub fn from_nothing(power_alpha: ResourceAddress,
-      power_dex: ResourceAddress, power_usd: Bucket, exrd_resource: ResourceAddress, 
+    pub fn from_nothing(alpha_addr: ComponentAddress, power_alpha: ResourceAddress,
+      power_eux: ResourceAddress, power_usd: Bucket, exrd_resource: ResourceAddress, 
       lower_bound: Decimal, upper_bound: Decimal, flash_fee: Decimal, 
       mock_oracle: Decimal
-      ) -> Global<Usd> {
+      ) -> (ComponentAddress, ResourceAddress) {
 
       let flash_resource = ResourceBuilder::new_ruid_non_fungible::<Flash>(OwnerRole::None)
         .metadata(metadata!(
@@ -121,11 +119,9 @@ mod usd {
         .create_with_no_initial_supply()
         .address();
 
-      Self {
- //       alpha_addr,
+      let a1 = Self {
+        alpha_addr,
 
-        power_alpha,
-        power_dex,
         power_usd: Vault::with_bucket(power_usd),
 
         liability_total: dec!(0),
@@ -151,10 +147,13 @@ mod usd {
       .roles(
         roles!(
           alpha => rule!(require(power_alpha));
-          dex => rule!(require(power_dex));
+          dex => rule!(require(power_eux));
         )
       )
       .globalize()
+      .address();
+
+      return (a1, eusd_resource)
     }
 
     pub fn to_nothing(&mut self) {
@@ -294,23 +293,24 @@ mod usd {
     // check if aa is necessary
     // contains all the mandatory pegging logic
     // for v2, to maybe AMO-ize that
-    pub fn aa_poke(&mut self, spot: Decimal) -> Option<(Decimal, bool)> { 
+    // spot is EUSD/EXRD, oracle is EUSD/XRD -- needs to rescale
+    pub fn aa_poke(&mut self, spot: Decimal) -> Option<(Decimal, Decimal, ool)> { 
       // todo panic if flashed
       // todo automatically add LP from profits + treasury REAL
       // todo TCR checks
       // TODO share some of the profit with ECDPs 
       // todo send profits to treasury
+      // todo spot gives EUSD/EXRD, we have exchr EUSD/XRD (todo lookup XRD/EXRD)
       if spot > self.mock_oracle * self.upper_bound {
-        Some((self.mock_oracle * self.upper_bound, true))
+        Some((self.mock_oracle * self.upper_bound, self.mock_oracle, true))
       } else if spot < self.mock_oracle * self.lower_bound {
-        Some((self.mock_oracle * self.lower_bound, false))
-      } else {
+        Some((self.mock_oracle * self.lower_bound, self.mock_oracle, false))
+      } else { // todo rescale the oracle to EXRD units 
         None
       }
     }
 
     // execute aa
-    // it pulls 2x the requested amount, to LP
     pub fn aa_woke(&mut self, size: Decimal, direction: bool) -> Bucket {
       if direction {
         Self::authorize(&mut self.power_usd, || {
@@ -333,9 +333,22 @@ mod usd {
     
     // get aa profit, in LP
     // input is EUXLP -> Treasury to be changed into TLP
-    pub fn aa_choke(&mut self, _lp: Bucket, _rem: Option<Bucket>) {
-      // todo send profits to treasury
-      // todo unused
+    // remainder is of type dep on direction -- incoherence panics
+    pub fn aa_choke(&mut self, ret: Bucket, profit: Bucket, direction: bool) {
+      if direction {
+        self.exrd_vault.put(ret);
+
+        // todo: authorize question on alpha
+        self.alpha_addr.call_raw::<()>("aa_rope", scrypto_args!(profit));
+      } else {
+        self.liability_total -= ret.amount();
+        Self::authorize(&mut self.power_usd, || {
+          ResourceManager::from(self.eusd_resource).burn(ret)
+        });
+
+        // todo: authorize question on alpha
+        self.alpha_addr.call_raw::<()>("aa_rope", scrypto_args!(profit));
+      }
     }
 
     // internal 
