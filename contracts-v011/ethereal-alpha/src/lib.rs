@@ -14,6 +14,7 @@ mod alpha {
       to_nothing => restrict_to: [zero];
       aa_rope => PUBLIC; // TODO restrict?
       set_app_addrs => restrict_to: [zero];
+      get_app_addrs => PUBLIC;
     }
   }
 
@@ -61,6 +62,10 @@ mod alpha {
       .address()
     }
 
+    pub fn to_nothing(&mut self) {
+
+    }
+
     // TODO: auth? is it worth guarding against someone 
     // donating their EUXLP here? like it makes treasury add liquidity 
     // but is that a bad thing? coung be an add high type situation
@@ -71,13 +76,15 @@ mod alpha {
     // honestly don't see it being a problem: TODO ask vex
     //
     // automatically pairs it with treasury REAL
-    pub fn aa_rope(&mut self, input: Bucket) {
+    pub fn aa_rope(&mut self, mut input: Bucket) {
       // no check if it's euxlp, but if it isn't, it explodes HERE
+      let dao: Global<AnyComponent> = self.dao_addr.into();
 
-      let (_, delta, _) = 
-        self.dao_addr.call_raw::<ComponentAddress, ComponentAddress, ComponentAddress>(
+      let (_, delta_ca, _) = 
+        dao.call_raw::<(ComponentAddress, ComponentAddress, ComponentAddress)>(
           "get_branch_addrs", scrypto_args!()
-        )
+        );
+      let delta: Global<AnyComponent> = delta_ca.into();
       
       // token boosted POL acquisition
       let real = Self::authorize(&mut self.power_alpha, || { 
@@ -93,8 +100,9 @@ mod alpha {
 
       // assumes order of REAL / EUXLP
       // HERE
+      let tri: Global<AnyComponent> = self.app_addrs.2.into();
       let (tlp, remainder) = 
-        self.tri_addr.call_raw("add_liquidity", scrypto_args!(real, input));
+        tri.call_raw::<(Bucket, Option<Bucket>)>("add_liquidity", scrypto_args!(real, input));
 
       Self::authorize(&mut self.power_alpha, || { 
         delta.call_raw::<()>

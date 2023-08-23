@@ -63,7 +63,7 @@ mod usd {
     // fixed exch rate
     mock_oracle: Decimal,
 
-    stopped: bool
+    stopped: bool // TODO make work
   }
 
   impl Usd {
@@ -140,7 +140,7 @@ mod usd {
 
         mock_oracle,
 
-        stopped: true // need vote to start
+        stopped: false // TODO: need vote to start
       }
       .instantiate()
       .prepare_to_globalize(OwnerRole::None)
@@ -294,7 +294,7 @@ mod usd {
     // contains all the mandatory pegging logic
     // for v2, to maybe AMO-ize that
     // spot is EUSD/EXRD, oracle is EUSD/XRD -- needs to rescale
-    pub fn aa_poke(&mut self, spot: Decimal) -> Option<(Decimal, Decimal, ool)> { 
+    pub fn aa_poke(&mut self, spot: Decimal) -> Option<(Decimal, Decimal, bool)> { 
       // todo panic if flashed
       // todo automatically add LP from profits + treasury REAL
       // todo TCR checks
@@ -335,11 +335,12 @@ mod usd {
     // input is EUXLP -> Treasury to be changed into TLP
     // remainder is of type dep on direction -- incoherence panics
     pub fn aa_choke(&mut self, ret: Bucket, profit: Bucket, direction: bool) {
+      let alpha: Global<AnyComponent> = self.alpha_addr.into();
       if direction {
         self.exrd_vault.put(ret);
 
         // todo: authorize question on alpha
-        self.alpha_addr.call_raw::<()>("aa_rope", scrypto_args!(profit));
+        alpha.call_raw::<()>("aa_rope", scrypto_args!(profit));
       } else {
         self.liability_total -= ret.amount();
         Self::authorize(&mut self.power_usd, || {
@@ -347,7 +348,7 @@ mod usd {
         });
 
         // todo: authorize question on alpha
-        self.alpha_addr.call_raw::<()>("aa_rope", scrypto_args!(profit));
+        alpha.call_raw::<()>("aa_rope", scrypto_args!(profit));
       }
     }
 

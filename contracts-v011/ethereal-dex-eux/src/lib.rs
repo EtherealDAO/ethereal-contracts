@@ -20,7 +20,6 @@ mod eux {
       spot_price => PUBLIC;
       swap => PUBLIC;
       vault_reserves => PUBLIC;
-      mock_change_eusd => PUBLIC;
     }
   }
 
@@ -30,7 +29,7 @@ mod eux {
     pool: (Vault, Vault),
     pool_lp: (ResourceAddress, Decimal),
     swap_fee: Decimal,
-    stopped: bool
+    stopped: bool // TODO make work
   }
 
   impl Eux {
@@ -73,7 +72,7 @@ mod eux {
         pool,
         pool_lp: (lp_ra, dec!(0)),
         swap_fee,
-        stopped: false
+        stopped: false // TODO: need vote to start
       }
       .instantiate()
       .prepare_to_globalize(OwnerRole::None)
@@ -212,17 +211,20 @@ mod eux {
     }
 
     fn perform_aa(&mut self) {
-      let (eusd, _, _) = 
-        self.alpha_addr.call_raw::<(ComponentAddress, ComponentAddress, ComponentAddress)>(
+      let alpha: Global<AnyComponent> = self.alpha_addr.into();
+
+      let (eusd_ca, _, _) = 
+        alpha.call_raw::<(ComponentAddress, ComponentAddress, ComponentAddress)>(
           "get_app_addrs", scrypto_args!()
         );
+      let eusd: Global<AnyComponent> = eusd_ca.into();
 
       // assumes the oracle on USD side was rescaled to EXRD from XRD
       if let Some((target, oracle, direction)) = eusd.call_raw::<Option<(Decimal, Decimal, bool)>>
         ("aa_poke", scrypto_args!(self.spot_price())) {
         if let Some(size) = self.in_given_price(target, direction) {
 
-          let mut input1 = Self::authorize(&mut self.power_eux, || { 
+          let input1 = Self::authorize(&mut self.power_eux, || { 
             eusd.call_raw::<Bucket>("aa_woke", scrypto_args!(size, direction))
           });
           let available = input1.amount();
@@ -234,7 +236,7 @@ mod eux {
             let repriced = dec!("1") / oracle * available; 
 
             // profit of treasury, in EXRD
-            let profit = input2.take(input2.amount() - repriced);
+            let mut profit = ret.take(ret.amount() - repriced);
             
             // r1 ~ EUSD
             let r1 = self.internal_swap(profit.take(profit.amount()/dec!("2")));
@@ -251,7 +253,7 @@ mod eux {
             let repriced = oracle * available; 
 
             // profit of treasury, in EUSD
-            let profit = input2.take(input2.amount() - repriced);
+            let mut profit = ret.take(ret.amount() - repriced);
 
             // r1 ~ EXRD
             let r1 = self.internal_swap(profit.take(profit.amount()/dec!("2")));
@@ -270,7 +272,7 @@ mod eux {
     }
 
     // todo aa_choke cleanup
-    pub fn swap(&mut self, input: Bucket) -> (Bucket, Option<(Bucket, Bucket)>, Option<(Bucket, Bucket)>) {
+    pub fn swap(&mut self, input: Bucket) -> Bucket {
       assert!( !self.stopped && !self.power_eux.is_empty(),
         "DEX stopped or empty"); 
 
@@ -346,10 +348,6 @@ mod eux {
     // simulated swap, returns the amount that will be returned with a regular swap
     pub fn sim_swap(&self, _input: Decimal, _resource_in: ResourceAddress) { // -> Decimal {
       
-    }
-
-    pub fn mock_change_eusd(&mut self, eusd: ComponentAddress) {
-      self.eusd_addr = eusd;
     }
   }
 }

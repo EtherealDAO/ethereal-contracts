@@ -32,7 +32,7 @@ mod tri {
     resources: ((ResourceAddress, Decimal), (ResourceAddress, Decimal)),
     pool: Global<TwoResourcePool>,
     swap_fee: Decimal,
-    stopped: bool
+    stopped: bool // TODO make work
   }
 
   impl Tri {
@@ -47,16 +47,18 @@ mod tri {
       assert!( t1w + t2w == dec!("1") && t1w > dec!("0") && t2w > dec!("0"), 
         "weights must sum to 1 and both be positive");
       
-      assert!( swap_fee < dec!("0.1") && swap_fee >= dec!("0"), 
+      assert!( swap_fee <= dec!("1") && swap_fee >= dec!("0.9"), 
         "fee must be smaller than 10% and positive");
 
-      let pool = Blueprint::<TwoResourcePool>::instantiate(
+      let pool: Global<TwoResourcePool> = Blueprint::<TwoResourcePool>::instantiate(
         OwnerRole::Fixed(rule!(require(power_alpha))),
         rule!(require(power_tri.resource_address())),
         (t1, t2),
       );
 
-      let lp_ra = pool.get_metadata("pool_unit").expect("incoherence")
+      let lp_ga: GlobalAddress = pool.get_metadata("pool_unit").expect("incoherence");
+      // yes, this is the best way afaik lmao
+      let lp_ra = ResourceAddress::new_or_panic(Into::<[u8; 30]>::into(lp_ga));
 
       let a1 = Self {
         alpha_addr,
@@ -64,7 +66,7 @@ mod tri {
         resources: ((t1, t1w), (t2, t2w)),
         pool,
         swap_fee,
-        stopped: true
+        stopped: false // TODO: need vote to start
       }
       .instantiate()
       .prepare_to_globalize(OwnerRole::None)
@@ -75,7 +77,7 @@ mod tri {
         )
       )
       .globalize()
-      .resource();
+      .address();
 
       return (a1, lp_ra)
     }
@@ -141,7 +143,7 @@ mod tri {
       assert!( !self.stopped && !self.power_tri.is_empty(),
         "DEX stopped or empty"); 
 
-      let size_in = input.amount() * (dec!("1") - self.swap_fee);
+      let size_in = input.amount() * self.swap_fee;
       let ra_in = input.resource_address();
 
       let reserves = self.vault_reserves();
@@ -181,10 +183,6 @@ mod tri {
       return ret
     }
 
-    pub fn change_fee(&mut self, new_fee: Decimal) {
-
-    }
-
     // AUXILIARY (for interop)
 
     // how many to input to get a set number on output? 
@@ -209,11 +207,11 @@ mod tri {
     pub fn spot_price(&self) -> Decimal {
       let reserves = self.vault_reserves();
 
-      ((reserves.get(self.resources.0.0).expect("incoherence") / self.resources.0.1)
+      ((*reserves.get(&self.resources.0.0).expect("incoherence") / self.resources.0.1)
       /
-      (reserves.get(self.resources.1.0).expect("incoherence") / self.resources.1.1))
+      (*reserves.get(&self.resources.1.0).expect("incoherence") / self.resources.1.1))
       *
-      (dec!("1") / (dec!("1") - self.swap_fee))
+      (dec!("1") / self.swap_fee)
     }
 
     // simulated swap, returns the amount that will be returned with a regular swap
