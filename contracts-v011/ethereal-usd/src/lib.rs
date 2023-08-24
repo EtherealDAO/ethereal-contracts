@@ -294,7 +294,8 @@ mod usd {
     // contains all the mandatory pegging logic
     // for v2, to maybe AMO-ize that
     // spot is EUSD/EXRD, oracle is EUSD/XRD -- needs to rescale
-    pub fn aa_poke(&mut self, spot: Decimal) -> Option<(Decimal, Decimal, bool)> { 
+    pub fn aa_poke(&mut self, spot: Decimal) -> Option<(Decimal, Decimal, bool)> {
+      info!("aa_poke IN"); 
       // todo panic if flashed
       // todo automatically add LP from profits + treasury REAL
       // todo TCR checks
@@ -312,6 +313,7 @@ mod usd {
 
     // execute aa
     pub fn aa_woke(&mut self, size: Decimal, direction: bool) -> Bucket {
+      info!("aa_woke IN"); 
       if direction {
         Self::authorize(&mut self.power_usd, || {
           // TODO tcr check, mint only as much as can
@@ -335,6 +337,8 @@ mod usd {
     // input is EUXLP -> Treasury to be changed into TLP
     // remainder is of type dep on direction -- incoherence panics
     pub fn aa_choke(&mut self, ret: Bucket, profit: Bucket, direction: bool) {
+      info!("aa_choke IN"); 
+
       let alpha: Global<AnyComponent> = self.alpha_addr.into();
       if direction {
         self.exrd_vault.put(ret);

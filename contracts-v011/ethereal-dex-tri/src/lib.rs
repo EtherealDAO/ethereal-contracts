@@ -30,7 +30,7 @@ mod tri {
     power_tri: Vault,
 
     resources: ((ResourceAddress, Decimal), (ResourceAddress, Decimal)),
-    pool: Global<TwoResourcePool>,
+    pool: ComponentAddress,
     swap_fee: Decimal,
     stopped: bool // TODO make work
   }
@@ -64,7 +64,7 @@ mod tri {
         alpha_addr,
         power_tri: Vault::with_bucket(power_tri),
         resources: ((t1, t1w), (t2, t2w)),
-        pool,
+        pool: pool.address(),
         swap_fee,
         stopped: false // TODO: need vote to start
       }
@@ -109,8 +109,10 @@ mod tri {
       assert!( *self.vault_reserves().iter().next().expect("incoherence").1 == dec!(0),
         "first deposit into an already running pool");
 
+      let mut pool: Global<TwoResourcePool> = self.pool.into();
+
       Self::authorize(&mut self.power_tri, ||
-        self.pool.contribute((b1, b2))
+        pool.contribute((b1, b2))
       )
     }
 
@@ -119,6 +121,7 @@ mod tri {
     pub fn start_stop(&mut self, input: bool) {
       self.stopped = input;
     }
+    // TODO HALT ALL ACTIONS WHEN STOPPED
 
     // adds all three, basing it on the REAL deposit for correct proportion
     // does not return excess liquidity, just 'swap-balances' them out
@@ -126,22 +129,27 @@ mod tri {
       assert!( !self.stopped && !self.power_tri.is_empty(),
         "DEX stopped or empty"); 
 
+      let mut pool: Global<TwoResourcePool> = self.pool.into();
+
       Self::authorize(&mut self.power_tri, ||
-        self.pool.contribute((b1, b2))
+        pool.contribute((b1, b2))
       )
     }
 
     pub fn remove_liquidity(&mut self, input: Bucket) -> (Bucket, Bucket) {
       // even if stopped or soulless, 
       // can remove liquidity (in equal balance as at time of stop/soulrip)
+      let mut pool: Global<TwoResourcePool> = self.pool.into();
 
-      self.pool.redeem(input)
+      pool.redeem(input)
     }
 
     // no slippage limit, can set it in the manifest
     pub fn swap(&mut self, input: Bucket) -> Bucket {
       assert!( !self.stopped && !self.power_tri.is_empty(),
         "DEX stopped or empty"); 
+
+      let mut pool: Global<TwoResourcePool> = self.pool.into();
 
       let size_in = input.amount() * self.swap_fee;
       let ra_in = input.resource_address();
@@ -166,8 +174,8 @@ mod tri {
         );
 
       Self::authorize(&mut self.power_tri, || {
-        self.pool.protected_deposit(input);
-        self.pool.protected_withdraw(ra_out, size_out, 
+        pool.protected_deposit(input);
+        pool.protected_withdraw(ra_out, size_out, 
           WithdrawStrategy::Rounded(RoundingMode::ToZero))
       })
     }
@@ -198,7 +206,9 @@ mod tri {
 
     // dumps current # of in each bucket
     pub fn vault_reserves(&self) -> BTreeMap<ResourceAddress, Decimal> {
-      self.pool.get_vault_amounts()
+      let pool: Global<TwoResourcePool> = self.pool.into();
+
+      pool.get_vault_amounts()
     }
 
 

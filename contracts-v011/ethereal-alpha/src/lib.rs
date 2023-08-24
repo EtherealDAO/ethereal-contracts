@@ -77,6 +77,8 @@ mod alpha {
     //
     // automatically pairs it with treasury REAL
     pub fn aa_rope(&mut self, mut input: Bucket) {
+      info!("aa_rope IN"); 
+
       // no check if it's euxlp, but if it isn't, it explodes HERE
       let dao: Global<AnyComponent> = self.dao_addr.into();
 
@@ -103,6 +105,8 @@ mod alpha {
       let tri: Global<AnyComponent> = self.app_addrs.2.into();
       let (tlp, remainder) = 
         tri.call_raw::<(Bucket, Option<Bucket>)>("add_liquidity", scrypto_args!(real, input));
+
+      info!("aa_rope OUT"); 
 
       Self::authorize(&mut self.power_alpha, || { 
         delta.call_raw::<()>

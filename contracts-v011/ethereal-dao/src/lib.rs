@@ -168,7 +168,7 @@ mod dao {
             "Usd",
             "from_nothing",
             scrypto_args!(
-              dao_addr, alpha_resource,
+              alpha_addr, alpha_resource,
               power_eux.resource_address().clone(), power_usd,
               exrd, u_lower, u_upper, u_flash_fee, u_mock_oracle
             )
@@ -275,7 +275,7 @@ mod dao {
               alpha_addr, alpha_resource, self.power_azero,
               self.power_tri.take_all(),
               self.real.resource_address(), t_w1,
-              self.exrd, t_w2,
+              self.euxlp, t_w2,
               t_swap_fee
             )
         )

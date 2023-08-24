@@ -103,12 +103,14 @@ mod eux {
       assert!( self.pool.0.amount() == dec!(0),
         "first deposit into an already running pool");
 
-      self.pool_lp.1 += dec!(10);
+      let initmint = (b1.amount() * b2.amount()).sqrt().unwrap();
+
+      self.pool_lp.1 += initmint;
       self.pool.0.put(b1);
       self.pool.1.put(b2);
 
       Self::authorize(&mut self.power_eux, ||
-        (ResourceManager::from(self.pool_lp.0).mint(dec!(10)), None)
+        (ResourceManager::from(self.pool_lp.0).mint(initmint), None)
       )
     }
 
@@ -120,45 +122,47 @@ mod eux {
 
     // adds all three, basing it on the REAL deposit for correct proportion
     // does not return excess liquidity, just 'swap-balances' them out
-    pub fn add_liquidity(&mut self, b1: Bucket, b2: Bucket) -> (Bucket, Option<Bucket>) {
+    pub fn add_liquidity(&mut self, mut b1: Bucket, mut b2: Bucket) -> (Bucket, Option<Bucket>) {
       assert!( !self.stopped && !self.power_eux.is_empty(),
         "DEX stopped or empty"); 
 
-      let amnt1 = b1.amount() / self.pool.0.amount();
-      let amnt2 = b2.amount() / self.pool.1.amount();
+      let in1 = b1.amount();
+      let in2 = b2.amount();
+      let pool1 = self.pool.0.amount();
+      let pool2 = self.pool.1.amount();
 
-      if amnt1 > amnt2 {
-        let minted = self.pool_lp.1 * amnt1;
-        let rem = (dec!(1) -  amnt2 / amnt1) * b1.amount();
+      if (pool1 / pool2) < (in1 / in2) {
+        let in1new = in2 * pool1 / pool2;
+        let minted = self.pool_lp.1 * in1new / pool1;
 
         self.pool_lp.1 += minted;
-
-        self.pool.0.put(b1);
+ 
+        self.pool.0.put(b1.take(in1new));
         self.pool.1.put(b2);
 
         return (
           Self::authorize(&mut self.power_eux, 
             || ResourceManager::from(self.pool_lp.0).mint(minted)),
-          Some(self.pool.0.take(rem))
+          Some(b1)
         )
 
-      } else if amnt2 > amnt1 {
-        let minted = self.pool_lp.1 * amnt1;
-        let rem = (dec!(1) -  amnt1 / amnt2) * b2.amount();
+      } else if (pool1 / pool2) > (in1 / in2) {
+        let in2new = in1 * pool2 / pool1; 
+        let minted = self.pool_lp.1 * in2new / pool2;
 
         self.pool_lp.1 += minted;
 
         self.pool.0.put(b1);
-        self.pool.1.put(b2);
+        self.pool.1.put(b2.take(in2new));
 
         return (
           Self::authorize(&mut self.power_eux, 
             || ResourceManager::from(self.pool_lp.0).mint(minted)),
-          Some(self.pool.1.take(rem))
+          Some(b2)
         )
 
       } else {
-        let minted = self.pool_lp.1 * amnt1;
+        let minted = self.pool_lp.1 * in1 / pool1;
         self.pool_lp.1 += minted;
 
         self.pool.0.put(b1);
@@ -211,6 +215,7 @@ mod eux {
     }
 
     fn perform_aa(&mut self) {
+      info!("perform_aa IN");
       let alpha: Global<AnyComponent> = self.alpha_addr.into();
 
       let (eusd_ca, _, _) = 
@@ -233,24 +238,27 @@ mod eux {
           
           let profit = if direction {
             // reprice the sold EUSD at the oracle price 
-            let repriced = dec!("1") / oracle * available; 
+            let repriced = oracle * available; 
+            info!("SOLD {} FOR {} REPRICED AT {}", available, ret.amount(), repriced);
 
             // profit of treasury, in EXRD
             let mut profit = ret.take(ret.amount() - repriced);
-            
+            info!("AA PROFIT: TOOK {}", profit.amount());
             // r1 ~ EUSD
             let r1 = self.internal_swap(profit.take(profit.amount()/dec!("2")));
-            let (lp, rem) = self.add_liquidity(profit, r1);
+            info!("AA PROFIT: SWAPPED HALF FOR {}", r1.amount());
+            let (lp, rem) = self.add_liquidity(r1, profit);
+            info!("AA PROFIT: ADDED LIQUIDITY");
             if let Some(r1p) = rem {
-              // rem will be EUSD
-              // since the swap for it sold EXRD
-              self.pool.0.put(r1p);
+              // remaining will be EXRD, since EUSD just rose in value
+              self.pool.1.put(r1p);
             };
+            info!("RETURNING LP");
 
             lp
           } else {
             // reprice the sold EXRD at the oracle price 
-            let repriced = oracle * available; 
+            let repriced = dec!("1") / oracle * available; 
 
             // profit of treasury, in EUSD
             let mut profit = ret.take(ret.amount() - repriced);
@@ -259,12 +267,13 @@ mod eux {
             let r1 = self.internal_swap(profit.take(profit.amount()/dec!("2")));
             let (lp, rem) = self.add_liquidity(profit, r1);
             if let Some(r1p) = rem {
-              // rem will be EXRD
-              self.pool.1.put(r1p);
+              // remaining will be EUSD, since EXRD just rose in value
+              self.pool.0.put(r1p);
             };
 
             lp
           };
+          info!("perform_aa OUT");
 
           eusd.call_raw::<()>("aa_choke", scrypto_args!(ret, profit, direction)); 
         }

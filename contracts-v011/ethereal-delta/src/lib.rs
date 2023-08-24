@@ -73,6 +73,8 @@ mod delta {
     // GIVE ME ALL OF THE REAL
     // and, if you've any EUXLP, that also
     pub fn aa_tap(&mut self) -> (Bucket, Option<Bucket>) {
+      info!("aa_top IN"); 
+
       // honestly it pulling all at once is a hack to add miaximum possible size
       // without doing any calculation
       (self.aa_treasury.0.take_all(), 
@@ -82,6 +84,8 @@ mod delta {
 
     // thank you for being real with me
     pub fn aa_out(&mut self, ret: Option<Bucket>) {
+      info!("aa_out IN"); 
+
       if let Some(r) = ret {
         if r.resource_address() == self.aa_treasury.0.resource_address() {
           self.aa_treasury.0.put(r);
