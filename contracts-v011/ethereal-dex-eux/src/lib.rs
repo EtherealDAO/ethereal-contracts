@@ -214,7 +214,9 @@ mod eux {
       }
     }
 
-    fn perform_aa(&mut self) {
+    // AA triggers only once per tx, depending on the user direction
+    // either letting them buy high / sell low, or being the first to push it down/up
+    fn perform_aa(&mut self, user_direction: ResourceAddress, first_aa: bool) {
       info!("perform_aa IN");
       let alpha: Global<AnyComponent> = self.alpha_addr.into();
 
@@ -227,6 +229,21 @@ mod eux {
       // assumes the oracle on USD side was rescaled to EXRD from XRD
       if let Some((target, oracle, direction)) = eusd.call_raw::<Option<(Decimal, Decimal, bool)>>
         ("aa_poke", scrypto_args!(self.spot_price())) {
+
+        // is the user trying to swap the same direction that the system wants to?
+        let aligned_direction = user_direction == if direction 
+          { self.pool.0.resource_address() } else 
+          { self.pool.1.resource_address() };
+
+        // if the user is swapping against AA, and this is the first AA check
+        // then we AA on the second invocation
+        // OR
+        // if the user is swapping with AA, and this is the second AA check
+        // then we have AA'd on the first invocation
+        if (!aligned_direction && first_aa) || (aligned_direction && !first_aa) {
+          return
+        }
+
         if let Some(size) = self.in_given_price(target, direction) {
 
           let input1 = Self::authorize(&mut self.power_eux, || { 
@@ -285,14 +302,16 @@ mod eux {
       assert!( !self.stopped && !self.power_eux.is_empty(),
         "DEX stopped or empty"); 
 
+      let direction = input.resource_address();
+
       // pre-swap
-      self.perform_aa();
+      self.perform_aa(direction, true);
 
       // swap
       let ret = self.internal_swap(input);
 
       // post-swap
-      self.perform_aa();
+      self.perform_aa(direction, false);
 
       return ret
     }

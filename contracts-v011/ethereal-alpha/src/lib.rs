@@ -89,8 +89,8 @@ mod alpha {
       let delta: Global<AnyComponent> = delta_ca.into();
       
       // token boosted POL acquisition
-      let real = Self::authorize(&mut self.power_alpha, || { 
-        let (real, rem) = delta.call_raw::<(Bucket, Option<Bucket>)>
+      let aaboo = Self::authorize(&mut self.power_alpha, || { 
+        let (real, rem) = delta.call_raw::<(Option<Bucket>, Option<Bucket>)>
           ("aa_tap", scrypto_args!());
         
         if let Some(r) = rem {
@@ -100,20 +100,31 @@ mod alpha {
         real
       });
 
-      // assumes order of REAL / EUXLP
-      // HERE
-      let tri: Global<AnyComponent> = self.app_addrs.2.into();
-      let (tlp, remainder) = 
-        tri.call_raw::<(Bucket, Option<Bucket>)>("add_liquidity", scrypto_args!(real, input));
+      // if no real allocated to AA, put EUXLP in treasury
+      // and return early
+      if let Some(real) = aaboo {
+        // assumes order of REAL / EUXLP
+        // HERE
+        let tri: Global<AnyComponent> = self.app_addrs.2.into();
+        let (tlp, remainder) = 
+          tri.call_raw::<(Bucket, Option<Bucket>)>("add_liquidity", scrypto_args!(real, input));
 
-      info!("aa_rope OUT"); 
+        info!("aa_rope OUT"); 
 
-      Self::authorize(&mut self.power_alpha, || { 
-        delta.call_raw::<()>
-          ("aa_out", scrypto_args!(remainder));
-        delta.call_raw::<()>
-          ("deposit", scrypto_args!(tlp));
-      });
+        Self::authorize(&mut self.power_alpha, || { 
+          delta.call_raw::<()>
+            ("aa_out", scrypto_args!(remainder));
+          delta.call_raw::<()>
+            ("deposit", scrypto_args!(tlp));
+        });
+
+      } else {
+
+        Self::authorize(&mut self.power_alpha, || { 
+          delta.call_raw::<()>
+            ("aa_out", scrypto_args!(Some(input)));
+        });
+      }
     }
 
     pub fn get_app_addrs(&self) -> (ComponentAddress, ComponentAddress, ComponentAddress) {

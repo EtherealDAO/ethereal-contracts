@@ -72,12 +72,13 @@ mod delta {
 
     // GIVE ME ALL OF THE REAL
     // and, if you've any EUXLP, that also
-    pub fn aa_tap(&mut self) -> (Bucket, Option<Bucket>) {
+    pub fn aa_tap(&mut self) -> (Option<Bucket>, Option<Bucket>) {
       info!("aa_top IN"); 
 
       // honestly it pulling all at once is a hack to add miaximum possible size
       // without doing any calculation
-      (self.aa_treasury.0.take_all(), 
+      ( 
+        if self.aa_treasury.0.is_empty() { None } else { Some(self.aa_treasury.0.take_all()) }, 
         if self.aa_treasury.1.is_empty() { None } else { Some(self.aa_treasury.1.take_all()) }
       )
     }
