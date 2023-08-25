@@ -216,8 +216,26 @@ mod eux {
 
     // AA triggers only once per tx, depending on the user direction
     // either letting them buy high / sell low, or being the first to push it down/up
-    fn perform_aa(&mut self, user_direction: ResourceAddress, first_aa: bool) {
+    //
+    // ON EXTRAORDINARY HIGH DEPEG: 
+    // when the price is pushed with single transactions far beyond the soft peg,
+    // due to the system of automatically using profits for LP, it'll take it a few TXs
+    // to restore peg, leaving a lot of money on the table
+    // Keep in mind this is only a factor when a sigle transaction depegs it by over >10%
+    // a couple percents worth of a depeg (<10%) drop in a single transaction, without leaking profit
+    // The above was observed with depegs of >300%, 
+    // where the profits LP-ing back start to push the price way above peg again
+    // At 60% depeg, the profit leak was <5%
+    fn perform_aa(&mut self, user_direction: ResourceAddress, 
+        first_aa: bool, first_ran: bool) -> bool {
       info!("perform_aa IN");
+
+      // if first performed AA, don't do it twice
+      // special case for when user goes from above/beyony peg to the opposite side
+      if first_ran {
+        return false;
+      }
+
       let alpha: Global<AnyComponent> = self.alpha_addr.into();
 
       let (eusd_ca, _, _) = 
@@ -241,7 +259,8 @@ mod eux {
         // if the user is swapping with AA, and this is the second AA check
         // then we have AA'd on the first invocation
         if (!aligned_direction && first_aa) || (aligned_direction && !first_aa) {
-          return
+          info!("ALIGNED DIRECTION");
+          return false
         }
 
         if let Some(size) = self.in_given_price(target, direction) {
@@ -267,8 +286,12 @@ mod eux {
             let (lp, rem) = self.add_liquidity(r1, profit);
             info!("AA PROFIT: ADDED LIQUIDITY");
             if let Some(r1p) = rem {
-              // remaining will be EXRD, since EUSD just rose in value
-              self.pool.1.put(r1p);
+              // yes
+              if self.pool.0.resource_address() == r1p.resource_address() {
+                self.pool.0.put(r1p);
+              } else {
+                self.pool.1.put(r1p);
+              }
             };
             info!("RETURNING LP");
 
@@ -284,8 +307,11 @@ mod eux {
             let r1 = self.internal_swap(profit.take(profit.amount()/dec!("2")));
             let (lp, rem) = self.add_liquidity(profit, r1);
             if let Some(r1p) = rem {
-              // remaining will be EUSD, since EXRD just rose in value
-              self.pool.0.put(r1p);
+              if self.pool.0.resource_address() == r1p.resource_address() {
+                self.pool.0.put(r1p);
+              } else {
+                self.pool.1.put(r1p);
+              }
             };
 
             lp
@@ -293,8 +319,10 @@ mod eux {
           info!("perform_aa OUT");
 
           eusd.call_raw::<()>("aa_choke", scrypto_args!(ret, profit, direction)); 
+          return true
         }
       }
+      return false
     }
 
     // todo aa_choke cleanup
@@ -305,13 +333,13 @@ mod eux {
       let direction = input.resource_address();
 
       // pre-swap
-      self.perform_aa(direction, true);
+      let ran = self.perform_aa(direction, true, false);
 
       // swap
       let ret = self.internal_swap(input);
 
       // post-swap
-      self.perform_aa(direction, false);
+      self.perform_aa(direction, false, ran);
 
       return ret
     }
