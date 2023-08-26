@@ -9,6 +9,14 @@ pub struct Flash {
   pub isloan: Option<bool> // None -- mint, Some(true) -- XRD, Some(true) -- EXRD 
 }
 
+// problem: the LP Decimals could run out of Decimal space
+#[derive(NonFungibleData, ScryptoSbor)]
+pub struct Ecdp {
+  pub assets_lp: Decimal,
+  pub liabilities_lp: Decimal
+  // TODO liquidation hook
+}
+
 #[blueprint]
 mod usd {
   enable_method_auth! {
@@ -22,15 +30,22 @@ mod usd {
       aa_poke => PUBLIC;
       aa_woke => restrict_to: [dex];
       aa_choke => PUBLIC;
-      exrdxrd => PUBLIC;
+      xrdexrd => PUBLIC;
       flash_loan_start => PUBLIC;
       flash_loan_end => PUBLIC;
       flash_mint_start => PUBLIC;
       flash_mint_end => PUBLIC;
       liquidate => PUBLIC;
       tcr => PUBLIC;
+      asset_lp_usd => PUBLIC;
+      liability_lp_usd => PUBLIC;
+      open_ecdp => PUBLIC;
+      manipulate_ecdp => PUBLIC;
       inject_assets => PUBLIC;
       set_oracle => PUBLIC;
+      get_oracle => PUBLIC;
+      guarded_get_oracle => PUBLIC;
+      guarded_get_rescaled_oracle => PUBLIC;
       mock_mint => PUBLIC;
     }
   }
@@ -40,6 +55,12 @@ mod usd {
 
     power_usd: Vault,
 
+    ecdp_resource: ResourceAddress,
+
+    // lp totals
+    assets_lp_total: Decimal,
+    liabilities_lp_total: Decimal,
+
     // eusd
     liability_total: Decimal,
     eusd_resource: ResourceAddress,
@@ -48,6 +69,10 @@ mod usd {
     exrd_vault: Vault,
     xrd_vault: Vault,
 
+    mcr: Decimal,
+    bp: Decimal,
+    rp: Decimal,
+
     // %-expressed maximum price depeg on open market
     lower_bound: Decimal,
     upper_bound: Decimal,
@@ -55,7 +80,7 @@ mod usd {
     // flashing variables, allow only one active flashing in a tx
     // this includes any MP invocation, which means flash self sale is impossible
     flash_resource: ResourceAddress,
-    fl_active: bool,
+    fl_active: Option<Decimal>, // needs to store exact number
     fm_active: bool,
     flash_fee: Decimal,
     // TODO prevent liquidations when a flash is active
@@ -119,10 +144,45 @@ mod usd {
         .create_with_no_initial_supply()
         .address();
 
+      // TODO: metadata
+      let ecdp_resource = ResourceBuilder::new_ruid_non_fungible::<Ecdp>(OwnerRole::None)
+        .metadata(metadata!(
+          roles {
+            metadata_setter => rule!(require(power_usd.resource_address()));
+            metadata_setter_updater => rule!(deny_all);
+            metadata_locker => rule!(deny_all);
+            metadata_locker_updater => rule!(deny_all);
+          },
+          init {
+            "name" => "Ethereal ECDP Ownership Badge".to_owned(), updatable;
+            "symbol" => "ECDP", updatable;
+          }
+        ))
+        .mint_roles(mint_roles!(
+          minter => rule!(require(power_usd.resource_address()));
+          minter_updater => rule!(deny_all);
+        ))
+        // burns aren't utilized so just keeping it here for the uhh ability
+        .burn_roles(burn_roles!(
+          burner => rule!(require(power_usd.resource_address()));
+          burner_updater => rule!(deny_all);
+        ))
+        .non_fungible_data_update_roles(non_fungible_data_update_roles!(
+          non_fungible_data_updater => rule!(require(power_usd.resource_address()));
+          non_fungible_data_updater_updater => rule!(deny_all);
+        ))
+        .create_with_no_initial_supply()
+        .address();
+
       let a1 = Self {
         alpha_addr,
 
         power_usd: Vault::with_bucket(power_usd),
+
+        ecdp_resource,
+
+        assets_lp_total: dec!(0),
+        liabilities_lp_total: dec!(0),
 
         liability_total: dec!(0),
         eusd_resource,
@@ -130,11 +190,16 @@ mod usd {
         exrd_vault: Vault::new(exrd_resource),
         xrd_vault: Vault::new(XRD),
 
+        // TODO placeholders
+        mcr: dec!("1.2"),
+        bp: dec!("1.3"),
+        rp: dec!("1.5"),
+
         lower_bound,
         upper_bound,
 
         flash_resource,
-        fl_active: false,
+        fl_active: None,
         fm_active: false,
         flash_fee,
 
@@ -164,22 +229,127 @@ mod usd {
       self.stopped = input;
     }
 
-    pub fn tcr(&self) {
+    pub fn tcr(&self) -> Decimal {
       // TODO call validator
-      // and calculate how much XRD is underlying each EXRD 
+      if let Some(usdxrd) = self.guarded_get_oracle() {
+        let usd_xrd = self.xrd_vault.amount() * (dec!(1) / usdxrd); 
+        let usd_exrd = self.exrd_vault.amount() * (dec!(1) / (usdxrd * self.xrdexrd(dec!(1))));
+        return (usd_xrd + usd_exrd) / self.liability_total;
+      } 
+      panic!("OUTDATED ORACLE");
     }
 
-    pub fn liquidate(&mut self) {
-      // todo panic if flashed
-      // todo if liq happens, return X% of collateral as payment
+    // conversion of asset_lp units 
+    // returns the value of a 1 asset_lp in EUSD
+    // i.e. EUSD/asset_lp
+    pub fn asset_lp_usd(&self) -> Decimal {
+      if self.assets_lp_total == dec!(0) {
+        return dec!(0)
+      }
+      if let Some(usdxrd) = self.guarded_get_oracle() {
+        let usd_xrd = self.xrd_vault.amount() * (dec!(1) / usdxrd); 
+        let usd_exrd = self.exrd_vault.amount() * (dec!(1) / (usdxrd * self.xrdexrd(dec!(1))));
+        return (usd_xrd + usd_exrd) / self.assets_lp_total;
+      }
+      panic!("OUTDATED ORACLE");
     }
 
-    // how much XRD is each EXRD worth 
+    // conversion of liability_lp units 
+    pub fn liability_lp_usd(&self) -> Decimal {
+      if self.liabilities_lp_total == dec!(0) {
+        return dec!(0)
+      }
+      return self.liability_total / self.liabilities_lp_total;
+    }
+
+    // creates an empty ecdp
+    pub fn open_ecdp(&mut self) -> Bucket {
+      Self::authorize(&mut self.power_usd, || 
+        ResourceManager::from(self.ecdp_resource)
+          .mint_ruid_non_fungible(
+            Ecdp { assets_lp: dec!(0), liabilities_lp: dec!(0) }
+          )
+      )
+    }
+
+    // the freedom of everything at once
+    pub fn manipulate_ecdp(&self) {
+      // todo MIN_XRD (500?)
+
+    }
+
+    // takes an id of the ECDP to liquidate
+    // if liquidated, returns 1% of the total assets as a liquidator tip
+    // i.e. makes them push the button even if the ecdp is bad debt
+    // the rest is subtracted from top and bottom 1:1
+    // whatever assets are left, remain active and the game continues
+    pub fn liquidate(&mut self, 
+      liquidated_id: NonFungibleLocalId, 
+      liquidator_id: NonFungibleLocalId) {
+
+      assert!( !self.fl_active.is_some() && !self.fm_active,
+        "can't liquidate during flash transactions");
+      
+      let rm = ResourceManager::from(self.ecdp_resource);
+      let data_ted: Ecdp = rm.get_non_fungible_data(&liquidated_id);
+
+      let ass_usd = self.asset_lp_usd();
+      let lia_usd = self.liability_lp_usd();
+      let liq_cr = (data_ted.assets_lp * ass_usd) 
+              / (data_ted.liabilities_lp * lia_usd);
+
+      if liq_cr >= self.mcr {
+        // no liquidation
+        return 
+      }
+
+      // todo liquidation hook
+
+      // after tor cut --- todo, tor cut a parameter?
+      let assets_lp_total = data_ted.assets_lp * dec!("0.99");
+      let tor_cut = data_ted.assets_lp - assets_lp_total;
+      let assets_lp_usd_total = assets_lp_total * ass_usd;
+
+      let mut ted_remaining_usd = assets_lp_usd_total - data_ted.liabilities_lp * lia_usd;
+
+      // if bad debt, wipe out
+      if ted_remaining_usd <= dec!(0) {
+        ted_remaining_usd = dec!(0);
+      }
+
+      let ted_remaining_assets = ted_remaining_usd * (dec!(1) / ass_usd);
+
+      self.assets_lp_total -= assets_lp_usd_total - ted_remaining_assets;
+      self.liabilities_lp_total -= data_ted.liabilities_lp;
+
+      let data_tor: Ecdp = rm.get_non_fungible_data(&liquidator_id);
+      Self::authorize(&mut self.power_usd, || {
+        rm.update_non_fungible_data(&liquidated_id, "assets_lp", 
+          ted_remaining_assets
+        );
+        rm.update_non_fungible_data(&liquidated_id, "liabilities_lp",
+          dec!(0)
+        );
+        
+        rm.update_non_fungible_data(&liquidator_id, "assets_lp", 
+          data_tor.assets_lp + tor_cut
+        );
+      });
+      
+    }
+
+    // how much XRD is each EXRD worth, i.e. xrd/exrd 
     // system assumes no time value on unstake 
-    pub fn exrdxrd(&self, size: Decimal) -> Decimal {
+    pub fn xrdexrd(&self, size: Decimal) -> Decimal {
       // TODO call validator
+      // https://github.com/radixdlt/radixdlt-scrypto/blob/main/
+      // radix-engine/src/blueprints/consensus_manager/validator.rs#L1037
+      // ^ reeeeeee
+      // if they don't fix -> add to oracle
       size*dec!(1)
     }
+
+    // Flash Mint / Loan parts
 
     // re: flash mint/loans
     // they cannot trigger MP as that panics
@@ -191,6 +361,10 @@ mod usd {
       assert!(size <= if res { self.exrd_vault.amount() } else { self.xrd_vault.amount() },
         "our size is not size enough"
       );
+      assert!(!self.fl_active.is_some(), 
+        "twice flash loaned");
+
+      self.fl_active = Some(size*self.flash_fee);
 
       let flash = ResourceManager::from(self.flash_resource)
         .mint_ruid_non_fungible(
@@ -209,21 +383,23 @@ mod usd {
     pub fn flash_loan_end(&mut self, input: Bucket, flash: Bucket) {
       assert!(flash.resource_address() == self.flash_resource,
         "not flash");
-      assert!(!self.fl_active, 
+      assert!(self.fl_active.is_some(), 
         "twice flash loaned");
 
       let data: Flash = flash.as_non_fungible().non_fungible().data();
       
+      self.fl_active = None;
+
       match data.isloan {
         Some(true) => {
           if input.resource_address() == self.exrd_vault.resource_address() {
             assert!(input.amount() >= data.size,
               "insufficient size");
 
-            self.exrd_vault.put(input);
+            self.exrd_vault.put( input );
           } else {
             // TODO call exchange rate
-            self.xrd_vault.put(input);
+            self.xrd_vault.put( input );
           }
         }
         Some(false) => {
@@ -248,6 +424,7 @@ mod usd {
     // TODO: impose limit on the size?
     // what could go wrong? lmao
     pub fn flash_mint_start(&mut self, size: Decimal) -> (Bucket, Bucket) {
+      // the liablitity # doesn't change until repayment
       assert!(!self.fm_active, 
         "twice flash minted");
 
@@ -259,14 +436,16 @@ mod usd {
               isloan: None
           });
 
-        self.liability_total += size;
-        self.fm_active = true;
+        self.fm_active = true; // repay the fee and adjust in advance
+        self.liability_total -= size * (dec!(1) - self.flash_fee);
 
         (ResourceManager::from(self.eusd_resource).mint(size), flash)
       })
     }
 
     pub fn flash_mint_end(&mut self, input: Bucket, flash: Bucket) {
+      assert!(self.fm_active, 
+        "twice flash minted");
       assert!(flash.resource_address() == self.flash_resource,
         "not flash");
 
@@ -281,7 +460,6 @@ mod usd {
         _ => panic!("wrong flash type")
       };
 
-      self.liability_total -= input.amount();
       self.fm_active = false;
 
       Self::authorize(&mut self.power_usd, || {
@@ -290,6 +468,8 @@ mod usd {
       });
     }
 
+    // Automatic Arbitrage / Mandatory Pegging parts
+
     // check if aa is necessary
     // contains all the mandatory pegging logic
     // for v2, to maybe AMO-ize that
@@ -297,16 +477,21 @@ mod usd {
     pub fn aa_poke(&mut self, spot: Decimal) -> Option<(Decimal, Decimal, bool)> {
       info!("aa_poke IN"); 
       // todo panic if flashed
-      // todo automatically add LP from profits + treasury REAL
+      // ^ is it even needed? shouldn't be a problem really
       // todo TCR checks
       // TODO share some of the profit with ECDPs 
-      // todo send profits to treasury
       // todo spot gives EUSD/EXRD, we have exchr EUSD/XRD (todo lookup XRD/EXRD)
-      if spot > self.mock_oracle * self.upper_bound {
-        Some((self.mock_oracle * self.upper_bound, self.mock_oracle, true))
-      } else if spot < self.mock_oracle * self.lower_bound {
-        Some((self.mock_oracle * self.lower_bound, self.mock_oracle, false))
-      } else { // todo rescale the oracle to EXRD units 
+      // ^ delayed until validator api supports it
+      //   currently either via stake() on small size xrd 
+      //   ooooor we just feed it in via oracle
+
+      let usdexrd = self.guarded_get_rescaled_oracle().expect("OUTDATED ORACLE");
+
+      if spot > usdexrd * self.upper_bound {
+        Some((usdexrd * self.upper_bound, usdexrd, true))
+      } else if spot < usdexrd * self.lower_bound {
+        Some((usdexrd * self.lower_bound, usdexrd, false))
+      } else { 
         None
       }
     }
@@ -358,6 +543,31 @@ mod usd {
 
     // internal 
 
+    // returns USD/EXRD
+    pub fn guarded_get_rescaled_oracle(&self) -> Option<Decimal> {
+      if let Some(usdxrd) = self.guarded_get_oracle() {
+        // USD/EXRD = USD/XRD * XRD/EXRD 
+        Some(usdxrd * self.xrdexrd(dec!(1)))
+      } else {
+        None
+      }
+    }
+
+    // if feed is outdated, stop the system / withdrawal only mode
+    pub fn guarded_get_oracle(&self) -> Option<Decimal> {
+      let (usdxrd, last_update) = self.get_oracle();
+
+      // if oracle inactive for 5 minutes, shit the bed
+      if last_update.add_minutes(5i64).expect("incoherence").compare(
+          Clock::current_time_rounded_to_minutes(),
+          TimeComparisonOperator::Gt
+       ) {
+        None
+      } else {
+        Some(usdxrd)
+      }
+    }
+
     fn authorize<F: FnOnce() -> O, O>(power: &mut Vault, f: F) -> O {
       let temp = power.as_fungible().take_all();
       let ret = temp.authorize_with_all(|| {
@@ -380,6 +590,11 @@ mod usd {
 
     pub fn set_oracle(&mut self, exch: Decimal) {
       self.mock_oracle = exch;
+    }
+
+    // USD/XRD and last time it was updated
+    pub fn get_oracle(&self) -> (Decimal,Instant) {
+      (self.mock_oracle, Clock::current_time_rounded_to_minutes())
     }
   }
 }

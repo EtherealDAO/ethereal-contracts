@@ -19,6 +19,7 @@ mod eux {
       sim_swap => PUBLIC;
       spot_price => PUBLIC;
       swap => PUBLIC;
+      zap => PUBLIC;
       vault_reserves => PUBLIC;
     }
   }
@@ -325,7 +326,6 @@ mod eux {
       return false
     }
 
-    // todo aa_choke cleanup
     pub fn swap(&mut self, input: Bucket) -> Bucket {
       assert!( !self.stopped && !self.power_eux.is_empty(),
         "DEX stopped or empty"); 
@@ -337,6 +337,41 @@ mod eux {
 
       // swap
       let ret = self.internal_swap(input);
+
+      // post-swap
+      self.perform_aa(direction, false, ran);
+
+      return ret
+    }
+
+    // EXRD | EUSD -> EUXLP
+    // I am well aware that this isn't the exact equation
+    // but I am willing to ignore it
+    pub fn zap(&mut self, mut input: Bucket) -> Bucket {
+      assert!( !self.stopped && !self.power_eux.is_empty(),
+        "DEX stopped or empty"); 
+
+      let direction = input.resource_address();
+
+      // pre-swap
+      let ran = self.perform_aa(direction, true, false);
+
+      // ghetto zap
+      //  if it's good enough for AA, it's good enough for you
+      let p2 = self.internal_swap(input.take(input.amount()/dec!(2)));
+      let (ret, rem) = if input.resource_address() == self.pool.0.resource_address() {
+        self.add_liquidity(input, p2)
+      } else {
+        self.add_liquidity(p2, input)
+      };
+
+      if let Some(r1p) = rem {
+        if self.pool.0.resource_address() == r1p.resource_address() {
+          self.pool.0.put(r1p);
+        } else {
+          self.pool.1.put(r1p);
+        }
+      };
 
       // post-swap
       self.perform_aa(direction, false, ran);
