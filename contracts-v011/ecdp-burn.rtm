@@ -1,0 +1,37 @@
+CALL_METHOD
+    Address("component_sim1cptxxxxxxxxxfaucetxxxxxxxxx000527798379xxxxxxxxxhkrefh")
+    "lock_fee"
+    Decimal("5000")
+;
+CALL_METHOD
+    Address("account_sim1cyd08zuxt0kmuddmwlagas6g8g4x65w2sd4dfncfp7dha8augly08k")
+    "withdraw"
+    Address("resource_sim1t4009dyhhjl0p9hc25zgr5vs5auasye9nssgpdrw452ga2qfk6cqlx")
+    Decimal("10")
+;
+TAKE_FROM_WORKTOP
+    Address("resource_sim1t4009dyhhjl0p9hc25zgr5vs5auasye9nssgpdrw452ga2qfk6cqlx")
+    Decimal("10")
+    Bucket("bucket1")
+;
+CALL_METHOD
+    Address("account_sim1cyd08zuxt0kmuddmwlagas6g8g4x65w2sd4dfncfp7dha8augly08k")
+    "create_proof_of_non_fungibles"
+    Address("resource_sim1nfgggjnwstu9twdc7dmwnqfm69gg23kyeu6nr8zv44nfmyjcpt7avj")
+    Array<NonFungibleLocalId>(
+        NonFungibleLocalId("{af466f64b29ad9c9-96334464507b3001-146b5e7551e809c3-0095ac786fb83e01}"))
+;
+POP_FROM_AUTH_ZONE
+    Proof("proof1")
+;
+CALL_METHOD
+    Address("component_sim1cqadhktzrtvcsfrx42mju7s9awg5wamrvfpy8hqf4vz96unt5mlwmp")
+    "ecdp_burn"
+    Bucket("bucket1")
+    Proof("proof1")
+;
+CALL_METHOD
+    Address("account_sim1cyd08zuxt0kmuddmwlagas6g8g4x65w2sd4dfncfp7dha8augly08k")
+    "try_deposit_batch_or_refund"
+    Expression("ENTIRE_WORKTOP")
+;

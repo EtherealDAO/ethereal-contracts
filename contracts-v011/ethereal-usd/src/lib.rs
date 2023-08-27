@@ -12,7 +12,9 @@ pub struct Flash {
 // problem: the LP Decimals could run out of Decimal space
 #[derive(NonFungibleData, ScryptoSbor)]
 pub struct Ecdp {
+  #[mutable]
   pub assets_lp: Decimal,
+  #[mutable]
   pub liabilities_lp: Decimal
   // TODO liquidation hook
 }
@@ -40,7 +42,10 @@ mod usd {
       asset_lp_usd => PUBLIC;
       liability_lp_usd => PUBLIC;
       open_ecdp => PUBLIC;
-      manipulate_ecdp => PUBLIC;
+      ecdp_burn => PUBLIC;
+      ecdp_mint => PUBLIC;
+      ecdp_collateralize => PUBLIC;
+      ecdp_uncollateralize => PUBLIC;
       inject_assets => PUBLIC;
       set_oracle => PUBLIC;
       get_oracle => PUBLIC;
@@ -62,7 +67,7 @@ mod usd {
     liabilities_lp_total: Decimal,
 
     // eusd
-    liability_total: Decimal,
+    liabilities_total: Decimal,
     eusd_resource: ResourceAddress,
     
     // xrd + exrd 
@@ -83,7 +88,6 @@ mod usd {
     fl_active: Option<Decimal>, // needs to store exact number
     fm_active: bool,
     flash_fee: Decimal,
-    // TODO prevent liquidations when a flash is active
 
     // fixed exch rate
     mock_oracle: Decimal,
@@ -184,7 +188,7 @@ mod usd {
         assets_lp_total: dec!(0),
         liabilities_lp_total: dec!(0),
 
-        liability_total: dec!(0),
+        liabilities_total: dec!(0),
         eusd_resource,
         
         exrd_vault: Vault::new(exrd_resource),
@@ -234,7 +238,7 @@ mod usd {
       if let Some(usdxrd) = self.guarded_get_oracle() {
         let usd_xrd = self.xrd_vault.amount() * (dec!(1) / usdxrd); 
         let usd_exrd = self.exrd_vault.amount() * (dec!(1) / (usdxrd * self.xrdexrd(dec!(1))));
-        return (usd_xrd + usd_exrd) / self.liability_total;
+        return (usd_xrd + usd_exrd) / self.liabilities_total;
       } 
       panic!("OUTDATED ORACLE");
     }
@@ -259,7 +263,7 @@ mod usd {
       if self.liabilities_lp_total == dec!(0) {
         return dec!(0)
       }
-      return self.liability_total / self.liabilities_lp_total;
+      return self.liabilities_total / self.liabilities_lp_total;
     }
 
     // creates an empty ecdp
@@ -272,10 +276,179 @@ mod usd {
       )
     }
 
-    // the freedom of everything at once
-    pub fn manipulate_ecdp(&self) {
-      // todo MIN_XRD (500?)
+    // TODO if stopped
+    // if can't mint, panics
+    pub fn ecdp_mint(&mut self, lia_lp: Decimal, p: Proof) -> Bucket {
+      assert!(lia_lp > dec!(0), 
+        "negative mint number");
 
+      let rm = ResourceManager::from(self.ecdp_resource);
+      let nft: NonFungible<Ecdp> = p
+        .check(self.ecdp_resource)
+        .as_non_fungible()
+        .non_fungible();
+      let id = nft.local_id();
+      let data = nft.data();
+
+      let new_liabilities_lp = data.liabilities_lp + lia_lp;
+
+      // if first mint, lia_lp = 1
+      let cr = 
+        self.asset_lp_usd()*data.assets_lp 
+        / 
+        if self.liabilities_lp_total == dec!(0) 
+        { new_liabilities_lp
+        } else { new_liabilities_lp * self.liability_lp_usd() };
+      
+      assert!( cr >= self.mcr, 
+        "cannot mint under mcr");
+
+      // if first mint, lia_lp = 1
+      let current_eusdlp = 
+        if self.liabilities_lp_total == dec!(0) 
+        { dec!(1) 
+        } else { self.liabilities_total / self.liabilities_lp_total };
+
+      let minted = lia_lp / current_eusdlp;
+      info!("{}", minted);
+      
+      self.liabilities_total += minted;
+      self.liabilities_lp_total += lia_lp;
+      Self::authorize(&mut self.power_usd, || {
+        rm.update_non_fungible_data(&id, "liabilities_lp", 
+          lia_lp
+        );
+        ResourceManager::from(self.eusd_resource).mint(minted)
+      })
+    }
+
+    // if burns too much, panics
+    pub fn ecdp_burn(&mut self, input: Bucket, p: Proof) {
+      assert!(!input.is_empty(), 
+        "empty input");
+
+      let rm = ResourceManager::from(self.ecdp_resource);
+      let nft: NonFungible<Ecdp> = p
+        .check(self.ecdp_resource)
+        .as_non_fungible()
+        .non_fungible();
+      let id = nft.local_id();
+      let data = nft.data();
+
+      let burn_amount = input.amount();
+
+      // if first mint, panic
+      let current_eusdlp = self.liabilities_total / 
+        if self.liabilities_lp_total == dec!(0) 
+        { panic!("incoherence: burn without mints")
+        } else { self.liabilities_lp_total };
+
+      let new_liabilities_lp = data.liabilities_lp - burn_amount / current_eusdlp;
+      
+      // note: I can imagine a version of the system in which the 
+      // negative liabilities make sense
+      assert!( new_liabilities_lp >= dec!(0), 
+        "negative liabilities");
+      
+      self.liabilities_total -= burn_amount;
+      self.liabilities_lp_total -= burn_amount / current_eusdlp;
+      Self::authorize(&mut self.power_usd, || {
+        rm.update_non_fungible_data(&id, "liabilities_lp", 
+          new_liabilities_lp
+        );
+        ResourceManager::from(self.eusd_resource).burn(input);
+      });
+    }
+
+    // absolutely no panics, ever
+    pub fn ecdp_collateralize(&mut self, input: Bucket, p: Proof) {
+      assert!(!input.is_empty(), 
+        "empty input");
+
+      let rm = ResourceManager::from(self.ecdp_resource);
+      let nft: NonFungible<Ecdp> = p
+        .check(self.ecdp_resource)
+        .as_non_fungible()
+        .non_fungible();
+      let id = nft.local_id();
+      let data = nft.data();
+
+      let current_xrdlp = 
+        if self.assets_lp_total == dec!(0) 
+        { dec!(1)
+        } else {
+          (self.xrdexrd(self.exrd_vault.amount()) + self.xrd_vault.amount())
+          / self.assets_lp_total
+        };
+
+      let added_assets_lp = 
+        if input.resource_address() == self.exrd_vault.resource_address()
+        { let out = self.xrdexrd(input.amount()) * current_xrdlp;
+          self.exrd_vault.put(input);
+          out
+        } else {
+          let out = input.amount() * current_xrdlp;
+          self.xrd_vault.put(input);
+          out
+        };
+      
+      self.assets_lp_total += added_assets_lp;
+      Self::authorize(&mut self.power_usd, || {
+        rm.update_non_fungible_data(&id, "assets_lp", 
+          data.assets_lp + added_assets_lp
+        );
+      });
+    }
+
+    // returns EXRD first, and if that runs out, XRD second
+    pub fn ecdp_uncollateralize(&mut self, ass_lp: Decimal, p: Proof) 
+      -> (Bucket, Option<Bucket>) {
+      assert!(ass_lp != dec!(0), 
+        "empty input");
+
+      let rm = ResourceManager::from(self.ecdp_resource);
+      let nft: NonFungible<Ecdp> = p
+        .check(self.ecdp_resource)
+        .as_non_fungible()
+        .non_fungible();
+      let id = nft.local_id();
+      let data = nft.data();
+
+      let new_assets_lp = data.assets_lp - ass_lp;
+
+      assert!( new_assets_lp > dec!(0),
+        "negative assets");
+
+      let current_xrdlp = 
+        if self.assets_lp_total == dec!(0) 
+        { dec!(1)
+        } else {
+          (self.xrdexrd(self.exrd_vault.amount()) + self.xrd_vault.amount())
+          / self.assets_lp_total
+        };
+
+      let mut ret_xrd = None;
+      let ret_exrd = {
+        let refund_xrd = current_xrdlp * ass_lp;
+
+        if self.xrdexrd(self.exrd_vault.amount()) < refund_xrd {
+          // if the eexrd vault alone cannot pay out enough
+          let paidout = self.xrdexrd(self.exrd_vault.amount());
+          ret_xrd = Some(self.xrd_vault.take(refund_xrd - paidout));
+          self.exrd_vault.take_all()
+        } else {
+          self.exrd_vault.take(refund_xrd / self.xrdexrd(dec!(1)))
+        }
+      };
+      
+      self.assets_lp_total -= ass_lp;
+      Self::authorize(&mut self.power_usd, || {
+        rm.update_non_fungible_data(&id, "assets_lp", 
+          new_assets_lp
+        );
+      });
+
+      (ret_exrd, ret_xrd)
     }
 
     // takes an id of the ECDP to liquidate
@@ -298,12 +471,13 @@ mod usd {
       let liq_cr = (data_ted.assets_lp * ass_usd) 
               / (data_ted.liabilities_lp * lia_usd);
 
-      if liq_cr >= self.mcr {
+      // CR must fall under MCR or value of assets under 30 bucks
+      if liq_cr >= self.mcr && ( ass_usd >= dec!(30) ) {
         // no liquidation
         return 
       }
 
-      // todo liquidation hook
+      // TODO liquidation hook
 
       // after tor cut --- todo, tor cut a parameter?
       let assets_lp_total = data_ted.assets_lp * dec!("0.99");
@@ -340,6 +514,7 @@ mod usd {
 
     // how much XRD is each EXRD worth, i.e. xrd/exrd 
     // system assumes no time value on unstake 
+    // input as size in EXRD, inp 1 ~> returns >= 1
     pub fn xrdexrd(&self, size: Decimal) -> Decimal {
       // TODO call validator
       // https://github.com/radixdlt/radixdlt-scrypto/blob/main/
@@ -398,13 +573,17 @@ mod usd {
 
             self.exrd_vault.put( input );
           } else {
-            // TODO call exchange rate
+            assert!(input.amount() >= self.xrdexrd(data.size),
+              "insufficient size");
+
             self.xrd_vault.put( input );
           }
         }
         Some(false) => {
           if input.resource_address() == self.exrd_vault.resource_address() {   
-            // TODO call exchange rate       
+            assert!(self.xrdexrd(input.amount()) >= data.size,
+              "insufficient size");
+
             self.exrd_vault.put(input);
           } else {
             assert!(input.amount() >= data.size,
@@ -437,7 +616,7 @@ mod usd {
           });
 
         self.fm_active = true; // repay the fee and adjust in advance
-        self.liability_total -= size * (dec!(1) - self.flash_fee);
+        self.liabilities_total -= size * (dec!(1) - self.flash_fee);
 
         (ResourceManager::from(self.eusd_resource).mint(size), flash)
       })
@@ -478,7 +657,6 @@ mod usd {
       info!("aa_poke IN"); 
       // todo panic if flashed
       // ^ is it even needed? shouldn't be a problem really
-      // todo TCR checks
       // TODO share some of the profit with ECDPs 
       // todo spot gives EUSD/EXRD, we have exchr EUSD/XRD (todo lookup XRD/EXRD)
       // ^ delayed until validator api supports it
@@ -502,7 +680,7 @@ mod usd {
       if direction {
         Self::authorize(&mut self.power_usd, || {
           // TODO tcr check, mint only as much as can
-          self.liability_total += size;
+          self.liabilities_total += size;
           ResourceManager::from(self.eusd_resource).mint(size)
         })
       } else {
@@ -531,7 +709,7 @@ mod usd {
         // todo: authorize question on alpha
         alpha.call_raw::<()>("aa_rope", scrypto_args!(profit));
       } else {
-        self.liability_total -= ret.amount();
+        self.liabilities_total -= ret.amount();
         Self::authorize(&mut self.power_usd, || {
           ResourceManager::from(self.eusd_resource).burn(ret)
         });
@@ -560,7 +738,7 @@ mod usd {
       // if oracle inactive for 5 minutes, shit the bed
       if last_update.add_minutes(5i64).expect("incoherence").compare(
           Clock::current_time_rounded_to_minutes(),
-          TimeComparisonOperator::Gt
+          TimeComparisonOperator::Lte
        ) {
         None
       } else {
