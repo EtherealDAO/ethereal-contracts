@@ -266,61 +266,63 @@ mod eux {
 
         if let Some(size) = self.in_given_price(target, direction) {
 
-          let input1 = Self::authorize(&mut self.power_eux, || { 
-            eusd.call_raw::<Bucket>("aa_woke", scrypto_args!(size, direction))
-          });
-          let available = input1.amount();
+          if let Some((input1, prior)) = Self::authorize(&mut self.power_eux, || { 
+            eusd.call_raw::<Option<(Bucket, (Decimal,Decimal,Decimal))>>
+              ("aa_woke", scrypto_args!(size, direction))
+          }) {
+            let available = input1.amount();
 
-          let mut ret = self.internal_swap(input1);
-          
-          let profit = if direction {
-            // reprice the sold EUSD at the oracle price 
-            let repriced = oracle * available; 
-            info!("SOLD {} FOR {} REPRICED AT {}", available, ret.amount(), repriced);
+            let mut ret = self.internal_swap(input1);
+            
+            let profit = if direction {
+              // reprice the sold EUSD at the oracle price 
+              let repriced = oracle * available; 
+              info!("SOLD {} FOR {} REPRICED AT {}", available, ret.amount(), repriced);
 
-            // profit of treasury, in EXRD
-            let mut profit = ret.take(ret.amount() - repriced);
-            info!("AA PROFIT: TOOK {}", profit.amount());
-            // r1 ~ EUSD
-            let r1 = self.internal_swap(profit.take(profit.amount()/dec!("2")));
-            info!("AA PROFIT: SWAPPED HALF FOR {}", r1.amount());
-            let (lp, rem) = self.add_liquidity(r1, profit);
-            info!("AA PROFIT: ADDED LIQUIDITY");
-            if let Some(r1p) = rem {
-              // yes
-              if self.pool.0.resource_address() == r1p.resource_address() {
-                self.pool.0.put(r1p);
-              } else {
-                self.pool.1.put(r1p);
-              }
+              // profit of treasury, in EXRD
+              let mut profit = ret.take(ret.amount() - repriced);
+              info!("AA PROFIT: TOOK {}", profit.amount());
+              // r1 ~ EUSD
+              let r1 = self.internal_swap(profit.take(profit.amount()/dec!("2")));
+              info!("AA PROFIT: SWAPPED HALF FOR {}", r1.amount());
+              let (lp, rem) = self.add_liquidity(r1, profit);
+              info!("AA PROFIT: ADDED LIQUIDITY");
+              if let Some(r1p) = rem {
+                // yes
+                if self.pool.0.resource_address() == r1p.resource_address() {
+                  self.pool.0.put(r1p);
+                } else {
+                  self.pool.1.put(r1p);
+                }
+              };
+              info!("RETURNING LP");
+
+              lp
+            } else {
+              // reprice the sold EXRD at the oracle price 
+              let repriced = dec!("1") / oracle * available; 
+
+              // profit of treasury, in EUSD
+              let mut profit = ret.take(ret.amount() - repriced);
+
+              // r1 ~ EXRD
+              let r1 = self.internal_swap(profit.take(profit.amount()/dec!("2")));
+              let (lp, rem) = self.add_liquidity(profit, r1);
+              if let Some(r1p) = rem {
+                if self.pool.0.resource_address() == r1p.resource_address() {
+                  self.pool.0.put(r1p);
+                } else {
+                  self.pool.1.put(r1p);
+                }
+              };
+
+              lp
             };
-            info!("RETURNING LP");
+            info!("perform_aa OUT");
 
-            lp
-          } else {
-            // reprice the sold EXRD at the oracle price 
-            let repriced = dec!("1") / oracle * available; 
-
-            // profit of treasury, in EUSD
-            let mut profit = ret.take(ret.amount() - repriced);
-
-            // r1 ~ EXRD
-            let r1 = self.internal_swap(profit.take(profit.amount()/dec!("2")));
-            let (lp, rem) = self.add_liquidity(profit, r1);
-            if let Some(r1p) = rem {
-              if self.pool.0.resource_address() == r1p.resource_address() {
-                self.pool.0.put(r1p);
-              } else {
-                self.pool.1.put(r1p);
-              }
-            };
-
-            lp
-          };
-          info!("perform_aa OUT");
-
-          eusd.call_raw::<()>("aa_choke", scrypto_args!(ret, profit, direction)); 
-          return true
+            eusd.call_raw::<()>("aa_choke", scrypto_args!(ret, profit, direction, prior)); 
+            return true 
+          }
         }
       }
       return false

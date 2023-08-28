@@ -39,6 +39,7 @@ mod usd {
       flash_mint_end => PUBLIC;
       liquidate => PUBLIC;
       tcr => PUBLIC;
+      tcr_au_lu => PUBLIC;
       asset_lp_usd => PUBLIC;
       liability_lp_usd => PUBLIC;
       open_ecdp => PUBLIC;
@@ -80,9 +81,10 @@ mod usd {
     xrdexrd: Decimal, 
     last_up_xrdexrd: Epoch,
 
+    ep: Decimal,
     mcr: Decimal,
     bp: Decimal,
-    rp: Decimal,
+    ip: Decimal,
 
     // %-expressed maximum price depeg on open market
     lower_bound: Decimal,
@@ -207,9 +209,10 @@ mod usd {
         last_up_xrdexrd: Runtime::current_epoch(),
 
         // TODO placeholders
-        mcr: dec!("1.2"),
-        bp: dec!("1.3"),
-        rp: dec!("1.5"),
+        ep: dec!("1.1"),
+        mcr: dec!("1.3"),
+        bp: dec!("1.4"),
+        ip: dec!("1.6"),
 
         lower_bound,
         upper_bound,
@@ -251,6 +254,19 @@ mod usd {
         let usd_xrd = self.xrd_vault.amount() * (dec!(1) / usdxrd); 
         let usd_exrd = self.exrd_vault.amount() * (dec!(1) / (usdxrd * self.xrdexrd(dec!(1))));
         return (usd_xrd + usd_exrd) / self.liabilities_total;
+      } 
+      panic!("OUTDATED ORACLE");
+    }
+
+    // returns tcr + assets in usd + liabilities in usd
+    // purely a compt opt
+    pub fn tcr_au_lu(&mut self) -> (Decimal, Decimal, Decimal) {
+      if let Some(usdxrd) = self.guarded_get_oracle() {
+        let usd_xrd = self.xrd_vault.amount() * (dec!(1) / usdxrd); 
+        let usd_exrd = self.exrd_vault.amount() * (dec!(1) / (usdxrd * self.xrdexrd(dec!(1))));
+
+        let au = usd_xrd + usd_exrd;
+        return (au / self.liabilities_total, au, self.liabilities_total)
       } 
       panic!("OUTDATED ORACLE");
     }
@@ -662,17 +678,13 @@ mod usd {
     // check if aa is necessary
     // contains all the mandatory pegging logic
     // for v2, to maybe AMO-ize that
-    // spot is EUSD/EXRD, oracle is EUSD/XRD -- needs to rescale
+    // spot is EUSD/EXRD
     pub fn aa_poke(&mut self, spot: Decimal) -> Option<(Decimal, Decimal, bool)> {
       info!("aa_poke IN"); 
       // todo panic if flashed
       // ^ is it even needed? shouldn't be a problem really
-      //
-      // todo spot gives EUSD/EXRD, we have exchr EUSD/XRD (todo lookup XRD/EXRD)
-      // ^ delayed until validator api supports it
-      //   currently either via stake() on small size xrd 
-      //   ooooor we just feed it in via oracle
 
+      // EUSD/EXRD
       let usdexrd = self.guarded_get_rescaled_oracle().expect("OUTDATED ORACLE");
 
       if spot > usdexrd * self.upper_bound {
@@ -685,40 +697,96 @@ mod usd {
     }
 
     // execute aa
-    pub fn aa_woke(&mut self, size: Decimal, direction: bool) -> Bucket {
+    pub fn aa_woke(&mut self, size: Decimal, direction: bool) 
+      -> Option<(Bucket, (Decimal, Decimal, Decimal)) > {
       info!("aa_woke IN"); 
+      let (tcr, au, lu) = self.tcr_au_lu();
+
       if direction {
-        Self::authorize(&mut self.power_usd, || {
-          // TODO tcr check, mint only as much as can
-          self.liabilities_total += size;
-          ResourceManager::from(self.eusd_resource).mint(size)
-        })
+        // above backstop, can do MPup
+        if tcr > self.bp {
+          // derived from 
+          // bp <= a / (l + mint)
+          let max_mint = (au - lu * self.bp) / self.bp;
+          let mint = if max_mint > size { size } else { max_mint };
+
+          assert!( mint < au && mint < lu,
+            "incoherence" );
+
+          Self::authorize(&mut self.power_usd, || {
+            self.liabilities_total += mint;
+            Some((ResourceManager::from(self.eusd_resource).mint(mint), (mint, au, lu)))
+          })
+        } else {
+          None
+        }
       } else {
-        Self::authorize(&mut self.power_usd, || {
-          if self.exrd_vault.amount() <= size {
-            panic!("todo")
-            // TODO: pull liq from XRD and change into EXRD 
-            // (and if that's not enough, protocol is broke lol)
-          } else {
-            self.exrd_vault.take(size)
-          }
-        })
+        // above emergency, can do MPdown
+        if tcr > self.ep {
+          Self::authorize(&mut self.power_usd, || {            
+            if self.exrd_vault.amount() <= size {
+              panic!("todo -- NEEDS VALIDATOR API");
+              // TODO: pull liq from XRD and change into EXRD 
+              // (and if that's not enough, protocol is broke lol)
+            } else {
+              Some((self.exrd_vault.take(size), (size, au, lu)))
+            }
+          })
+        } else {
+          None
+        }
       }
     }
     
     // get aa profit, in LP
     // input is EUXLP -> Treasury to be changed into TLP
     // remainder is of type dep on direction -- incoherence panics
-    pub fn aa_choke(&mut self, ret: Bucket, profit: Bucket, direction: bool) {
+    pub fn aa_choke(&mut self, ret: Bucket, profit: Bucket, direction: bool,
+      prior: (Decimal, Decimal, Decimal)) {
       info!("aa_choke IN"); 
+
+      let (size, au, lu) = prior;
+      let tcr = au/lu;
 
       let alpha: Global<AnyComponent> = self.alpha_addr.into();
       if direction {
+        let ret_usd = ret.amount() / self.guarded_get_rescaled_oracle().unwrap();
+
+        // Down state or Up state?
+        if tcr > self.ip {
+          // top right -> owe less, own less
+          self.assets_index *= (au - size) / au;
+          self.liabilities_index *= (lu - ret_usd) / lu;
+        } else {
+          // top left -> owe more, own more
+          self.liabilities_index *= (lu + ret_usd) / lu;
+          self.assets_index *= (au + size) / au;
+        }
+
         self.exrd_vault.put(ret);
 
         // todo: authorize question on alpha
         alpha.call_raw::<()>("aa_rope", scrypto_args!(profit));
       } else {
+        // todo double check
+
+        let size_usd = size / self.guarded_get_rescaled_oracle().unwrap();
+
+        let c = 
+          (self.xrd_vault.amount() + self.xrdexrd*(self.exrd_vault.amount() + size))
+          / self.assets_lp_total;
+
+        // ensures that assets index doesn't go above total assets
+        if tcr > self.ip && self.assets_index * ((au + size_usd) / au) < c {
+          // bottom right -> owe more, own more
+          self.assets_index *= (au + ret.amount()) / au;
+          self.liabilities_index *= (lu + size_usd) / lu;
+        } else {
+          // bottom left -> owe less, own less
+          self.assets_index *= (au - size_usd) / au;
+          self.liabilities_index *= (lu - ret.amount()) / lu;
+        }
+
         self.liabilities_total -= ret.amount();
         Self::authorize(&mut self.power_usd, || {
           ResourceManager::from(self.eusd_resource).burn(ret)
