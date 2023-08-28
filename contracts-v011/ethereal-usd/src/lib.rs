@@ -74,6 +74,9 @@ mod usd {
     exrd_vault: Vault,
     xrd_vault: Vault,
 
+    assets_index: Decimal,
+    liabilities_index: Decimal,
+
     mcr: Decimal,
     bp: Decimal,
     rp: Decimal,
@@ -194,6 +197,9 @@ mod usd {
         exrd_vault: Vault::new(exrd_resource),
         xrd_vault: Vault::new(XRD),
 
+        assets_index: dec!(1),
+        liabilities_index: dec!(1),
+
         // TODO placeholders
         mcr: dec!("1.2"),
         bp: dec!("1.3"),
@@ -247,23 +253,17 @@ mod usd {
     // returns the value of a 1 asset_lp in EUSD
     // i.e. EUSD/asset_lp
     pub fn asset_lp_usd(&self) -> Decimal {
-      if self.assets_lp_total == dec!(0) {
-        return dec!(0)
-      }
       if let Some(usdxrd) = self.guarded_get_oracle() {
         let usd_xrd = self.xrd_vault.amount() * (dec!(1) / usdxrd); 
         let usd_exrd = self.exrd_vault.amount() * (dec!(1) / (usdxrd * self.xrdexrd(dec!(1))));
-        return (usd_xrd + usd_exrd) / self.assets_lp_total;
+        return self.assets_index * (usd_xrd + usd_exrd) / self.assets_lp_total;
       }
       panic!("OUTDATED ORACLE");
     }
 
     // conversion of liability_lp units 
     pub fn liability_lp_usd(&self) -> Decimal {
-      if self.liabilities_lp_total == dec!(0) {
-        return dec!(0)
-      }
-      return self.liabilities_total / self.liabilities_lp_total;
+      return self.liabilities_index * self.liabilities_total / self.liabilities_lp_total;
     }
 
     // creates an empty ecdp
@@ -295,23 +295,13 @@ mod usd {
       // if first mint, lia_lp = 1
       let cr = 
         self.asset_lp_usd()*data.assets_lp 
-        / 
-        if self.liabilities_lp_total == dec!(0) 
-        { new_liabilities_lp
-        } else { new_liabilities_lp * self.liability_lp_usd() };
+        / ( new_liabilities_lp * self.liabilities_index );
       
       assert!( cr >= self.mcr, 
         "cannot mint under mcr");
 
-      // if first mint, lia_lp = 1
-      let current_eusdlp = 
-        if self.liabilities_lp_total == dec!(0) 
-        { dec!(1) 
-        } else { self.liabilities_total / self.liabilities_lp_total };
+      let minted = lia_lp * self.liabilities_index;
 
-      let minted = lia_lp / current_eusdlp;
-      info!("{}", minted);
-      
       self.liabilities_total += minted;
       self.liabilities_lp_total += lia_lp;
       Self::authorize(&mut self.power_usd, || {
@@ -337,13 +327,7 @@ mod usd {
 
       let burn_amount = input.amount();
 
-      // if first mint, panic
-      let current_eusdlp = self.liabilities_total / 
-        if self.liabilities_lp_total == dec!(0) 
-        { panic!("incoherence: burn without mints")
-        } else { self.liabilities_lp_total };
-
-      let new_liabilities_lp = data.liabilities_lp - burn_amount / current_eusdlp;
+      let new_liabilities_lp = data.liabilities_lp - burn_amount / self.liabilities_index;
       
       // note: I can imagine a version of the system in which the 
       // negative liabilities make sense
@@ -351,7 +335,7 @@ mod usd {
         "negative liabilities");
       
       self.liabilities_total -= burn_amount;
-      self.liabilities_lp_total -= burn_amount / current_eusdlp;
+      self.liabilities_lp_total -= burn_amount / self.liabilities_index;
       Self::authorize(&mut self.power_usd, || {
         rm.update_non_fungible_data(&id, "liabilities_lp", 
           new_liabilities_lp
@@ -373,21 +357,13 @@ mod usd {
       let id = nft.local_id();
       let data = nft.data();
 
-      let current_xrdlp = 
-        if self.assets_lp_total == dec!(0) 
-        { dec!(1)
-        } else {
-          (self.xrdexrd(self.exrd_vault.amount()) + self.xrd_vault.amount())
-          / self.assets_lp_total
-        };
-
       let added_assets_lp = 
         if input.resource_address() == self.exrd_vault.resource_address()
-        { let out = self.xrdexrd(input.amount()) * current_xrdlp;
+        { let out = self.xrdexrd(input.amount()) / self.assets_index;
           self.exrd_vault.put(input);
           out
         } else {
-          let out = input.amount() * current_xrdlp;
+          let out = input.amount() / self.assets_index;
           self.xrd_vault.put(input);
           out
         };
@@ -416,20 +392,12 @@ mod usd {
 
       let new_assets_lp = data.assets_lp - ass_lp;
 
-      assert!( new_assets_lp > dec!(0),
+      assert!( new_assets_lp >= dec!(0),
         "negative assets");
-
-      let current_xrdlp = 
-        if self.assets_lp_total == dec!(0) 
-        { dec!(1)
-        } else {
-          (self.xrdexrd(self.exrd_vault.amount()) + self.xrd_vault.amount())
-          / self.assets_lp_total
-        };
 
       let mut ret_xrd = None;
       let ret_exrd = {
-        let refund_xrd = current_xrdlp * ass_lp;
+        let refund_xrd = self.assets_index * ass_lp;
 
         if self.xrdexrd(self.exrd_vault.amount()) < refund_xrd {
           // if the eexrd vault alone cannot pay out enough
@@ -493,8 +461,13 @@ mod usd {
 
       let ted_remaining_assets = ted_remaining_usd * (dec!(1) / ass_usd);
 
-      self.assets_lp_total -= assets_lp_usd_total - ted_remaining_assets;
+      let a_prior = self.assets_lp_total;
+      self.assets_lp_total -= assets_lp_total - ted_remaining_assets;
+      let l_prior = self.liabilities_lp_total;
       self.liabilities_lp_total -= data_ted.liabilities_lp;
+
+      self.assets_index *= a_prior / self.assets_lp_total;
+      self.liabilities_index *= l_prior / self.liabilities_lp_total;
 
       let data_tor: Ecdp = rm.get_non_fungible_data(&liquidator_id);
       Self::authorize(&mut self.power_usd, || {
@@ -509,7 +482,6 @@ mod usd {
           data_tor.assets_lp + tor_cut
         );
       });
-      
     }
 
     // how much XRD is each EXRD worth, i.e. xrd/exrd 
@@ -657,7 +629,7 @@ mod usd {
       info!("aa_poke IN"); 
       // todo panic if flashed
       // ^ is it even needed? shouldn't be a problem really
-      // TODO share some of the profit with ECDPs 
+      //
       // todo spot gives EUSD/EXRD, we have exchr EUSD/XRD (todo lookup XRD/EXRD)
       // ^ delayed until validator api supports it
       //   currently either via stake() on small size xrd 

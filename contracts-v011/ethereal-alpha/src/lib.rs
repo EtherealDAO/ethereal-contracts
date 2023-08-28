@@ -106,6 +106,8 @@ mod alpha {
         // assumes order of REAL / EUXLP
         // HERE
         let tri: Global<AnyComponent> = self.app_addrs.2.into();
+        // TODO: minimum price at which it adds it
+        // ^ derive from avg stake value or something
         let (tlp, remainder) = 
           tri.call_raw::<(Bucket, Option<Bucket>)>("add_liquidity", scrypto_args!(real, input));
 
