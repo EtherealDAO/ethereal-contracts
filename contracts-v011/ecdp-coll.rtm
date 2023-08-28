@@ -17,15 +17,15 @@ TAKE_FROM_WORKTOP
 CALL_METHOD
     Address("account_sim1cyd08zuxt0kmuddmwlagas6g8g4x65w2sd4dfncfp7dha8augly08k")
     "create_proof_of_non_fungibles"
-    Address("resource_sim1nfgggjnwstu9twdc7dmwnqfm69gg23kyeu6nr8zv44nfmyjcpt7avj")
+    Address("resource_sim1n2ch5adyy376lnluasdmq044q7kmwwqn6s3phs922lhyp7n340lf9l")
     Array<NonFungibleLocalId>(
-        NonFungibleLocalId("{af466f64b29ad9c9-96334464507b3001-146b5e7551e809c3-0095ac786fb83e01}"))
+        NonFungibleLocalId("{6f0e1e344ee34062-34c7a5ac50f6897c-ddf33a615504c1c6-744735be9371d5d3}"))
 ;
 POP_FROM_AUTH_ZONE
     Proof("proof1")
 ;
 CALL_METHOD
-    Address("component_sim1cqadhktzrtvcsfrx42mju7s9awg5wamrvfpy8hqf4vz96unt5mlwmp")
+    Address("component_sim1czv2d5nf0sx5a3av3d4mnnwzlarkw7gtew3r0gl9y3535r4sc58e94")
     "ecdp_collateralize"
     Bucket("bucket1")
     Proof("proof1")

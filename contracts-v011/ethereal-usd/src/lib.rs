@@ -202,7 +202,7 @@ mod usd {
         exrd_vault: Vault::new(exrd_resource),
         xrd_vault: Vault::new(XRD),
 
-        assets_index: dec!(1),
+        assets_index: dec!(1), // TODO: rescale to prevent loss of accuracy
         liabilities_index: dec!(1),
 
         xrdexrd: dec!(1), // TODO call
@@ -488,8 +488,8 @@ mod usd {
       let l_prior = self.liabilities_lp_total;
       self.liabilities_lp_total -= data_ted.liabilities_lp;
 
-      self.assets_index *= a_prior / self.assets_lp_total;
-      self.liabilities_index *= l_prior / self.liabilities_lp_total;
+      self.assets_index = self.assets_index * a_prior / self.assets_lp_total;
+      self.liabilities_index = self.liabilities_index * l_prior / self.liabilities_lp_total;
 
       let data_tor: Ecdp = rm.get_non_fungible_data(&liquidator_id);
       Self::authorize(&mut self.power_usd, || {
@@ -524,7 +524,7 @@ mod usd {
         self.xrdexrd = dec!(1); // todo update 
         let totalxrdpost = self.xrd_vault.amount() + self.xrdexrd*self.exrd_vault.amount();
 
-        self.assets_index *= totalxrdpost/totalxrdpre;
+        self.assets_index = self.assets_index * totalxrdpost/totalxrdpre;
         self.last_up_xrdexrd = current;
       }
       size * self.xrdexrd
@@ -578,7 +578,7 @@ mod usd {
             assert!(input.amount() >= data.size,
               "insufficient size");
             
-            self.assets_index *= 
+            self.assets_index = self.assets_index *
               (rest + self.xrdexrd * input.amount()) 
               / (rest + self.xrdexrd * pre);
 
@@ -587,7 +587,7 @@ mod usd {
             assert!(input.amount() >= self.xrdexrd(data.size),
               "insufficient size");
             
-            self.assets_index *= 
+            self.assets_index = self.assets_index * 
               (rest + input.amount()) 
               / (rest + self.xrdexrd * pre);
 
@@ -599,7 +599,7 @@ mod usd {
             assert!(self.xrdexrd(input.amount()) >= data.size,
               "insufficient size");
 
-            self.assets_index *= 
+            self.assets_index = self.assets_index *
               (rest + self.xrdexrd * input.amount()) 
               / (rest + pre);
 
@@ -608,7 +608,7 @@ mod usd {
             assert!(input.amount() >= data.size,
               "insufficient size");
 
-            self.assets_index *= 
+            self.assets_index = self.assets_index * 
               (rest + input.amount()) 
               / (rest + pre);
 
@@ -665,7 +665,7 @@ mod usd {
       self.fm_active = false;
       let pre = self.liabilities_total;
       self.liabilities_total -= input.amount() * (dec!(1) - self.flash_fee);
-      self.liabilities_index *= self.liabilities_total / pre;
+      self.liabilities_index = self.liabilities_index * self.liabilities_total / pre;
 
       Self::authorize(&mut self.power_usd, || {
         ResourceManager::from(self.eusd_resource).burn(input);
@@ -743,25 +743,32 @@ mod usd {
     // remainder is of type dep on direction -- incoherence panics
     pub fn aa_choke(&mut self, ret: Bucket, profit: Bucket, direction: bool,
       prior: (Decimal, Decimal, Decimal)) {
+
       info!("aa_choke IN"); 
 
       let (size, au, lu) = prior;
       let tcr = au/lu;
 
+      info!("s:{} au:{} lu:{}", size, au, lu);
+      info!("stage 1");
       let alpha: Global<AnyComponent> = self.alpha_addr.into();
       if direction {
         let ret_usd = ret.amount() / self.guarded_get_rescaled_oracle().unwrap();
+        info!("stage 2: {}", ret_usd);
 
+        info!("pre a: {} pre l: {}", self.assets_index, self.liabilities_index);
         // Down state or Up state?
         if tcr > self.ip {
           // top right -> owe less, own less
-          self.assets_index *= (au - size) / au;
-          self.liabilities_index *= (lu - ret_usd) / lu;
+          // *= is bugged 
+          self.assets_index = self.assets_index * (au - size) / au;
+          self.liabilities_index = self.liabilities_index  * (lu - ret_usd) / lu;
         } else {
           // top left -> owe more, own more
-          self.liabilities_index *= (lu + ret_usd) / lu;
-          self.assets_index *= (au + size) / au;
+          self.liabilities_index = self.liabilities_index * (lu + ret_usd) / lu;
+          self.assets_index = self.assets_index * (au + size) / au;
         }
+        info!("post a: {} post l: {}", self.assets_index, self.liabilities_index);
 
         self.exrd_vault.put(ret);
 
@@ -779,12 +786,12 @@ mod usd {
         // ensures that assets index doesn't go above total assets
         if tcr > self.ip && self.assets_index * ((au + size_usd) / au) < c {
           // bottom right -> owe more, own more
-          self.assets_index *= (au + ret.amount()) / au;
-          self.liabilities_index *= (lu + size_usd) / lu;
+          self.assets_index = self.assets_index * (au + ret.amount()) / au;
+          self.liabilities_index = self.liabilities_index * (lu + size_usd) / lu;
         } else {
           // bottom left -> owe less, own less
-          self.assets_index *= (au - size_usd) / au;
-          self.liabilities_index *= (lu - ret.amount()) / lu;
+          self.assets_index = self.assets_index * (au - size_usd) / au;
+          self.liabilities_index = self.liabilities_index * (lu - ret.amount()) / lu;
         }
 
         self.liabilities_total -= ret.amount();
