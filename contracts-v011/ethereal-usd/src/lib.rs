@@ -77,6 +77,9 @@ mod usd {
     assets_index: Decimal,
     liabilities_index: Decimal,
 
+    xrdexrd: Decimal, 
+    last_up_xrdexrd: Epoch,
+
     mcr: Decimal,
     bp: Decimal,
     rp: Decimal,
@@ -88,7 +91,7 @@ mod usd {
     // flashing variables, allow only one active flashing in a tx
     // this includes any MP invocation, which means flash self sale is impossible
     flash_resource: ResourceAddress,
-    fl_active: Option<Decimal>, // needs to store exact number
+    fl_active: bool, 
     fm_active: bool,
     flash_fee: Decimal,
 
@@ -200,6 +203,9 @@ mod usd {
         assets_index: dec!(1),
         liabilities_index: dec!(1),
 
+        xrdexrd: dec!(1), // TODO call
+        last_up_xrdexrd: Runtime::current_epoch(),
+
         // TODO placeholders
         mcr: dec!("1.2"),
         bp: dec!("1.3"),
@@ -209,7 +215,7 @@ mod usd {
         upper_bound,
 
         flash_resource,
-        fl_active: None,
+        fl_active: false,
         fm_active: false,
         flash_fee,
 
@@ -239,7 +245,7 @@ mod usd {
       self.stopped = input;
     }
 
-    pub fn tcr(&self) -> Decimal {
+    pub fn tcr(&mut self) -> Decimal {
       // TODO call validator
       if let Some(usdxrd) = self.guarded_get_oracle() {
         let usd_xrd = self.xrd_vault.amount() * (dec!(1) / usdxrd); 
@@ -252,7 +258,7 @@ mod usd {
     // conversion of asset_lp units 
     // returns the value of a 1 asset_lp in EUSD
     // i.e. EUSD/asset_lp
-    pub fn asset_lp_usd(&self) -> Decimal {
+    pub fn asset_lp_usd(&mut self) -> Decimal {
       if let Some(usdxrd) = self.guarded_get_oracle() {
         let usd_xrd = self.xrd_vault.amount() * (dec!(1) / usdxrd); 
         let usd_exrd = self.exrd_vault.amount() * (dec!(1) / (usdxrd * self.xrdexrd(dec!(1))));
@@ -405,7 +411,7 @@ mod usd {
           ret_xrd = Some(self.xrd_vault.take(refund_xrd - paidout));
           self.exrd_vault.take_all()
         } else {
-          self.exrd_vault.take(refund_xrd / self.xrdexrd(dec!(1)))
+          self.exrd_vault.take(refund_xrd / self.xrdexrd)
         }
       };
       
@@ -428,7 +434,7 @@ mod usd {
       liquidated_id: NonFungibleLocalId, 
       liquidator_id: NonFungibleLocalId) {
 
-      assert!( !self.fl_active.is_some() && !self.fm_active,
+      assert!( !self.fl_active && !self.fm_active,
         "can't liquidate during flash transactions");
       
       let rm = ResourceManager::from(self.ecdp_resource);
@@ -484,16 +490,28 @@ mod usd {
       });
     }
 
+    // TODO: check that this is called on every asset_lp interaction
     // how much XRD is each EXRD worth, i.e. xrd/exrd 
     // system assumes no time value on unstake 
     // input as size in EXRD, inp 1 ~> returns >= 1
-    pub fn xrdexrd(&self, size: Decimal) -> Decimal {
+    // additionally it corrects the asset index by bumping it with stake rewards from exrd
+    pub fn xrdexrd(&mut self, size: Decimal) -> Decimal {
       // TODO call validator
       // https://github.com/radixdlt/radixdlt-scrypto/blob/main/
       // radix-engine/src/blueprints/consensus_manager/validator.rs#L1037
       // ^ reeeeeee
       // if they don't fix -> add to oracle
-      size*dec!(1)
+
+      let current = Runtime::current_epoch();
+      if self.last_up_xrdexrd < current {
+        let totalxrdpre = self.xrd_vault.amount() + self.xrdexrd*self.exrd_vault.amount();
+        self.xrdexrd = dec!(1); // todo update 
+        let totalxrdpost = self.xrd_vault.amount() + self.xrdexrd*self.exrd_vault.amount();
+
+        self.assets_index *= totalxrdpost/totalxrdpre;
+        self.last_up_xrdexrd = current;
+      }
+      size * self.xrdexrd
     }
 
     // Flash Mint / Loan parts
@@ -508,10 +526,10 @@ mod usd {
       assert!(size <= if res { self.exrd_vault.amount() } else { self.xrd_vault.amount() },
         "our size is not size enough"
       );
-      assert!(!self.fl_active.is_some(), 
+      assert!(!self.fl_active, 
         "twice flash loaned");
 
-      self.fl_active = Some(size*self.flash_fee);
+      self.fl_active = true;
 
       let flash = ResourceManager::from(self.flash_resource)
         .mint_ruid_non_fungible(
@@ -530,23 +548,32 @@ mod usd {
     pub fn flash_loan_end(&mut self, input: Bucket, flash: Bucket) {
       assert!(flash.resource_address() == self.flash_resource,
         "not flash");
-      assert!(self.fl_active.is_some(), 
+      assert!(self.fl_active, 
         "twice flash loaned");
 
       let data: Flash = flash.as_non_fungible().non_fungible().data();
-      
-      self.fl_active = None;
 
+      let pre = data.size / self.flash_fee; 
+      let rest = self.xrdexrd(self.exrd_vault.amount()) + self.xrd_vault.amount();
+      
       match data.isloan {
         Some(true) => {
           if input.resource_address() == self.exrd_vault.resource_address() {
             assert!(input.amount() >= data.size,
               "insufficient size");
+            
+            self.assets_index *= 
+              (rest + self.xrdexrd * input.amount()) 
+              / (rest + self.xrdexrd * pre);
 
             self.exrd_vault.put( input );
           } else {
             assert!(input.amount() >= self.xrdexrd(data.size),
               "insufficient size");
+            
+            self.assets_index *= 
+              (rest + input.amount()) 
+              / (rest + self.xrdexrd * pre);
 
             self.xrd_vault.put( input );
           }
@@ -556,10 +583,18 @@ mod usd {
             assert!(self.xrdexrd(input.amount()) >= data.size,
               "insufficient size");
 
+            self.assets_index *= 
+              (rest + self.xrdexrd * input.amount()) 
+              / (rest + pre);
+
             self.exrd_vault.put(input);
           } else {
             assert!(input.amount() >= data.size,
               "insufficient size");
+
+            self.assets_index *= 
+              (rest + input.amount()) 
+              / (rest + pre);
 
             self.xrd_vault.put(input);
           }
@@ -567,6 +602,7 @@ mod usd {
         None => panic!("wrong resource type")
       };
 
+      self.fl_active = false;
       Self::authorize(&mut self.power_usd, || {
         ResourceManager::from(self.flash_resource).burn(flash)
       })
@@ -587,8 +623,7 @@ mod usd {
               isloan: None
           });
 
-        self.fm_active = true; // repay the fee and adjust in advance
-        self.liabilities_total -= size * (dec!(1) - self.flash_fee);
+        self.fm_active = true;
 
         (ResourceManager::from(self.eusd_resource).mint(size), flash)
       })
@@ -612,6 +647,9 @@ mod usd {
       };
 
       self.fm_active = false;
+      let pre = self.liabilities_total;
+      self.liabilities_total -= input.amount() * (dec!(1) - self.flash_fee);
+      self.liabilities_index *= self.liabilities_total / pre;
 
       Self::authorize(&mut self.power_usd, || {
         ResourceManager::from(self.eusd_resource).burn(input);
@@ -694,7 +732,7 @@ mod usd {
     // internal 
 
     // returns USD/EXRD
-    pub fn guarded_get_rescaled_oracle(&self) -> Option<Decimal> {
+    pub fn guarded_get_rescaled_oracle(&mut self) -> Option<Decimal> {
       if let Some(usdxrd) = self.guarded_get_oracle() {
         // USD/EXRD = USD/XRD * XRD/EXRD 
         Some(usdxrd * self.xrdexrd(dec!(1)))
