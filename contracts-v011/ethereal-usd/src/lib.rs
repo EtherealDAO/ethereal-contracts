@@ -381,13 +381,15 @@ mod usd {
 
       let added_assets_lp = 
         if input.resource_address() == self.exrd_vault.resource_address()
-        { let out = self.xrdexrd(input.amount()) / self.assets_index;
+        { // doing things in this order updates them correctly 
+          // IN RCNET!!! (and resim) -- RESIM LAZILY EVALS SHIT
+          let size = input.amount();
           self.exrd_vault.put(input);
-          out
+          self.xrdexrd(size) / self.assets_index
         } else {
-          let out = input.amount() / self.assets_index;
+          let size = input.amount();
           self.xrd_vault.put(input);
-          out
+          size / self.assets_index
         };
       
       self.assets_lp_total += added_assets_lp;
