@@ -266,8 +266,8 @@ mod eux {
 
         if let Some(size) = self.in_given_price(target, direction) {
 
-          if let Some((input1, prior)) = Self::authorize(&mut self.power_eux, || { 
-            eusd.call_raw::<Option<(Bucket, (Decimal,Decimal,Decimal))>>
+          if let Some(input1) = Self::authorize(&mut self.power_eux, || { 
+            eusd.call_raw::<Option<Bucket>>
               ("aa_woke", scrypto_args!(size, direction))
           }) {
             let available = input1.amount();
@@ -320,7 +320,7 @@ mod eux {
             };
             info!("perform_aa OUT");
 
-            eusd.call_raw::<()>("aa_choke", scrypto_args!(ret, profit, direction, prior)); 
+            eusd.call_raw::<()>("aa_choke", scrypto_args!(ret, profit, direction)); 
             return true 
           }
         }

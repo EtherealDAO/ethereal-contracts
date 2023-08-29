@@ -41,6 +41,7 @@ mod usd {
       tcr => PUBLIC;
       tcr_au_lu => PUBLIC;
       asset_lp_usd => PUBLIC;
+      asset_lp_xrd => PUBLIC;
       liability_lp_usd => PUBLIC;
       open_ecdp => PUBLIC;
       ecdp_burn => PUBLIC;
@@ -75,16 +76,9 @@ mod usd {
     exrd_vault: Vault,
     xrd_vault: Vault,
 
-    assets_index: Decimal,
-    liabilities_index: Decimal,
-
-    xrdexrd: Decimal, 
-    last_up_xrdexrd: Epoch,
-
     ep: Decimal,
     mcr: Decimal,
     bp: Decimal,
-    ip: Decimal,
 
     // %-expressed maximum price depeg on open market
     lower_bound: Decimal,
@@ -202,17 +196,10 @@ mod usd {
         exrd_vault: Vault::new(exrd_resource),
         xrd_vault: Vault::new(XRD),
 
-        assets_index: dec!(1), // TODO: rescale to prevent loss of accuracy
-        liabilities_index: dec!(1),
-
-        xrdexrd: dec!(1), // TODO call
-        last_up_xrdexrd: Runtime::current_epoch(),
-
         // TODO placeholders
         ep: dec!("1.1"),
         mcr: dec!("1.3"),
         bp: dec!("1.4"),
-        ip: dec!("1.6"),
 
         lower_bound,
         upper_bound,
@@ -252,7 +239,7 @@ mod usd {
       // TODO call validator
       if let Some(usdxrd) = self.guarded_get_oracle() {
         let usd_xrd = self.xrd_vault.amount() * (dec!(1) / usdxrd); 
-        let usd_exrd = self.exrd_vault.amount() * (dec!(1) / (usdxrd * self.xrdexrd(dec!(1))));
+        let usd_exrd = self.exrd_vault.amount() * (dec!(1) / (usdxrd * self.xrdexrd()));
         return (usd_xrd + usd_exrd) / self.liabilities_total;
       } 
       panic!("OUTDATED ORACLE");
@@ -263,7 +250,7 @@ mod usd {
     pub fn tcr_au_lu(&mut self) -> (Decimal, Decimal, Decimal) {
       if let Some(usdxrd) = self.guarded_get_oracle() {
         let usd_xrd = self.xrd_vault.amount() * (dec!(1) / usdxrd); 
-        let usd_exrd = self.exrd_vault.amount() * (dec!(1) / (usdxrd * self.xrdexrd(dec!(1))));
+        let usd_exrd = self.exrd_vault.amount() * (dec!(1) / (usdxrd * self.xrdexrd()));
 
         let au = usd_xrd + usd_exrd;
         return (au / self.liabilities_total, au, self.liabilities_total)
@@ -277,15 +264,23 @@ mod usd {
     pub fn asset_lp_usd(&mut self) -> Decimal {
       if let Some(usdxrd) = self.guarded_get_oracle() {
         let usd_xrd = self.xrd_vault.amount() * (dec!(1) / usdxrd); 
-        let usd_exrd = self.exrd_vault.amount() * (dec!(1) / (usdxrd * self.xrdexrd(dec!(1))));
-        return self.assets_index * (usd_xrd + usd_exrd) / self.assets_lp_total;
+        let usd_exrd = self.exrd_vault.amount() * (dec!(1) / (usdxrd * self.xrdexrd()));
+        return (usd_xrd + usd_exrd) / self.assets_lp_total;
       }
       panic!("OUTDATED ORACLE");
     }
 
+    // XRD/asset_lp
+    // how much xrd is each asset_lp worth
+    pub fn asset_lp_xrd(&mut self) -> Decimal {
+      return ( self.xrd_vault.amount() +  self.xrdexrd()*self.exrd_vault.amount() ) 
+        / self.assets_lp_total;
+    }
+
     // conversion of liability_lp units 
+    // EUSD / lia_lp
     pub fn liability_lp_usd(&self) -> Decimal {
-      return self.liabilities_index * self.liabilities_total / self.liabilities_lp_total;
+      return self.liabilities_total / self.liabilities_lp_total;
     }
 
     // creates an empty ecdp
@@ -314,15 +309,16 @@ mod usd {
 
       let new_liabilities_lp = data.liabilities_lp + lia_lp;
 
+      let lp_usd = self.liability_lp_usd();
+
       // if first mint, lia_lp = 1
       let cr = 
         self.asset_lp_usd()*data.assets_lp 
-        / ( new_liabilities_lp * self.liabilities_index );
-      
+        / ( new_liabilities_lp * lp_usd );
       assert!( cr >= self.mcr, 
         "cannot mint under mcr");
 
-      let minted = lia_lp * self.liabilities_index;
+      let minted = lia_lp * lp_usd;
 
       self.liabilities_total += minted;
       self.liabilities_lp_total += lia_lp;
@@ -348,8 +344,10 @@ mod usd {
       let data = nft.data();
 
       let burn_amount = input.amount();
+      let lp_usd = self.liability_lp_usd();
 
-      let new_liabilities_lp = data.liabilities_lp - burn_amount / self.liabilities_index;
+      // prop_val = lp_usd * lp ~> lp = prop_val / lp_usd 
+      let new_liabilities_lp = data.liabilities_lp - burn_amount / lp_usd;
       
       // note: I can imagine a version of the system in which the 
       // negative liabilities make sense
@@ -357,7 +355,7 @@ mod usd {
         "negative liabilities");
       
       self.liabilities_total -= burn_amount;
-      self.liabilities_lp_total -= burn_amount / self.liabilities_index;
+      self.liabilities_lp_total -= burn_amount / lp_usd;
       Self::authorize(&mut self.power_usd, || {
         rm.update_non_fungible_data(&id, "liabilities_lp", 
           new_liabilities_lp
@@ -379,17 +377,16 @@ mod usd {
       let id = nft.local_id();
       let data = nft.data();
 
+      let lp_xrd = self.asset_lp_xrd();
+      let size = input.amount();
+
       let added_assets_lp = 
         if input.resource_address() == self.exrd_vault.resource_address()
-        { // doing things in this order updates them correctly 
-          // IN RCNET!!! (and resim) -- RESIM LAZILY EVALS SHIT
-          let size = input.amount();
-          self.exrd_vault.put(input);
-          self.xrdexrd(size) / self.assets_index
+        { self.exrd_vault.put(input);
+          self.xrdexrd()*size / lp_xrd
         } else {
-          let size = input.amount();
           self.xrd_vault.put(input);
-          size / self.assets_index
+          size / lp_xrd
         };
       
       self.assets_lp_total += added_assets_lp;
@@ -419,17 +416,26 @@ mod usd {
       assert!( new_assets_lp >= dec!(0),
         "negative assets");
 
+      let cr = 
+        new_assets_lp * self.asset_lp_usd()
+        / ( data.liabilities_lp * self.liability_lp_usd() );
+      assert!( cr >= self.mcr, 
+        "cannot mint under mcr");
+
+      let lp_xrd = self.asset_lp_xrd();
+
       let mut ret_xrd = None;
       let ret_exrd = {
-        let refund_xrd = self.assets_index * ass_lp;
+        let refund_xrd = ass_lp * lp_xrd;
+        let xrdexrd =  self.xrdexrd();
 
-        if self.xrdexrd(self.exrd_vault.amount()) < refund_xrd {
+        if xrdexrd*self.exrd_vault.amount() < refund_xrd {
           // if the eexrd vault alone cannot pay out enough
-          let paidout = self.xrdexrd(self.exrd_vault.amount());
+          let paidout = xrdexrd*self.exrd_vault.amount();
           ret_xrd = Some(self.xrd_vault.take(refund_xrd - paidout));
           self.exrd_vault.take_all()
         } else {
-          self.exrd_vault.take(refund_xrd / self.xrdexrd)
+          self.exrd_vault.take(refund_xrd / xrdexrd)
         }
       };
       
@@ -485,13 +491,8 @@ mod usd {
 
       let ted_remaining_assets = ted_remaining_usd * (dec!(1) / ass_usd);
 
-      let a_prior = self.assets_lp_total;
       self.assets_lp_total -= assets_lp_total - ted_remaining_assets;
-      let l_prior = self.liabilities_lp_total;
       self.liabilities_lp_total -= data_ted.liabilities_lp;
-
-      self.assets_index = self.assets_index * a_prior / self.assets_lp_total;
-      self.liabilities_index = self.liabilities_index * l_prior / self.liabilities_lp_total;
 
       let data_tor: Ecdp = rm.get_non_fungible_data(&liquidator_id);
       Self::authorize(&mut self.power_usd, || {
@@ -513,23 +514,14 @@ mod usd {
     // system assumes no time value on unstake 
     // input as size in EXRD, inp 1 ~> returns >= 1
     // additionally it corrects the asset index by bumping it with stake rewards from exrd
-    pub fn xrdexrd(&mut self, size: Decimal) -> Decimal {
+    pub fn xrdexrd(&self) -> Decimal {
       // TODO call validator
       // https://github.com/radixdlt/radixdlt-scrypto/blob/main/
       // radix-engine/src/blueprints/consensus_manager/validator.rs#L1037
       // ^ reeeeeee
       // if they don't fix -> add to oracle
 
-      let current = Runtime::current_epoch();
-      if self.last_up_xrdexrd < current {
-        let totalxrdpre = self.xrd_vault.amount() + self.xrdexrd*self.exrd_vault.amount();
-        self.xrdexrd = dec!(1); // todo update 
-        let totalxrdpost = self.xrd_vault.amount() + self.xrdexrd*self.exrd_vault.amount();
-
-        self.assets_index = self.assets_index * totalxrdpost/totalxrdpre;
-        self.last_up_xrdexrd = current;
-      }
-      size * self.xrdexrd
+      dec!(1) // todo update 
     }
 
     // Flash Mint / Loan parts
@@ -546,6 +538,11 @@ mod usd {
       );
       assert!(!self.fl_active, 
         "twice flash loaned");
+
+
+      // TODO : in unindexified version when flash loaned the system
+      //        needs to work correctly 
+      //        despite "technically" possibly being underwater
 
       self.fl_active = true;
 
@@ -571,48 +568,31 @@ mod usd {
 
       let data: Flash = flash.as_non_fungible().non_fungible().data();
 
-      let pre = data.size / self.flash_fee; 
-      let rest = self.xrdexrd(self.exrd_vault.amount()) + self.xrd_vault.amount();
+      let xrdexrd = self.xrdexrd();
       
       match data.isloan {
         Some(true) => {
           if input.resource_address() == self.exrd_vault.resource_address() {
             assert!(input.amount() >= data.size,
               "insufficient size");
-            
-            self.assets_index = self.assets_index *
-              (rest + self.xrdexrd * input.amount()) 
-              / (rest + self.xrdexrd * pre);
 
             self.exrd_vault.put( input );
           } else {
-            assert!(input.amount() >= self.xrdexrd(data.size),
+            assert!(input.amount() >= xrdexrd*data.size,
               "insufficient size");
-            
-            self.assets_index = self.assets_index * 
-              (rest + input.amount()) 
-              / (rest + self.xrdexrd * pre);
 
             self.xrd_vault.put( input );
           }
         }
         Some(false) => {
           if input.resource_address() == self.exrd_vault.resource_address() {   
-            assert!(self.xrdexrd(input.amount()) >= data.size,
+            assert!(xrdexrd*input.amount() >= data.size,
               "insufficient size");
-
-            self.assets_index = self.assets_index *
-              (rest + self.xrdexrd * input.amount()) 
-              / (rest + pre);
 
             self.exrd_vault.put(input);
           } else {
             assert!(input.amount() >= data.size,
               "insufficient size");
-
-            self.assets_index = self.assets_index * 
-              (rest + input.amount()) 
-              / (rest + pre);
 
             self.xrd_vault.put(input);
           }
@@ -665,9 +645,7 @@ mod usd {
       };
 
       self.fm_active = false;
-      let pre = self.liabilities_total;
       self.liabilities_total -= input.amount() * (dec!(1) - self.flash_fee);
-      self.liabilities_index = self.liabilities_index * self.liabilities_total / pre;
 
       Self::authorize(&mut self.power_usd, || {
         ResourceManager::from(self.eusd_resource).burn(input);
@@ -700,7 +678,7 @@ mod usd {
 
     // execute aa
     pub fn aa_woke(&mut self, size: Decimal, direction: bool) 
-      -> Option<(Bucket, (Decimal, Decimal, Decimal)) > {
+      -> Option<Bucket> {
       info!("aa_woke IN"); 
       let (tcr, au, lu) = self.tcr_au_lu();
 
@@ -717,7 +695,7 @@ mod usd {
 
           Self::authorize(&mut self.power_usd, || {
             self.liabilities_total += mint;
-            Some((ResourceManager::from(self.eusd_resource).mint(mint), (mint, au, lu)))
+            Some(ResourceManager::from(self.eusd_resource).mint(mint))
           })
         } else {
           None
@@ -731,7 +709,7 @@ mod usd {
               // TODO: pull liq from XRD and change into EXRD 
               // (and if that's not enough, protocol is broke lol)
             } else {
-              Some((self.exrd_vault.take(size), (size, au, lu)))
+              Some(self.exrd_vault.take(size))
             }
           })
         } else {
@@ -743,59 +721,18 @@ mod usd {
     // get aa profit, in LP
     // input is EUXLP -> Treasury to be changed into TLP
     // remainder is of type dep on direction -- incoherence panics
-    pub fn aa_choke(&mut self, ret: Bucket, profit: Bucket, direction: bool,
-      prior: (Decimal, Decimal, Decimal)) {
-
+    pub fn aa_choke(&mut self, ret: Bucket, profit: Bucket, direction: bool) {
       info!("aa_choke IN"); 
 
-      let (size, au, lu) = prior;
-      let tcr = au/lu;
-
-      info!("s:{} au:{} lu:{}", size, au, lu);
       info!("stage 1");
       let alpha: Global<AnyComponent> = self.alpha_addr.into();
       if direction {
-        let ret_usd = ret.amount() / self.guarded_get_rescaled_oracle().unwrap();
-        info!("stage 2: {}", ret_usd);
-
-        info!("pre a: {} pre l: {}", self.assets_index, self.liabilities_index);
-        // Down state or Up state?
-        if tcr > self.ip {
-          // top right -> owe less, own less
-          // *= is bugged 
-          self.assets_index = self.assets_index * (au - size) / au;
-          self.liabilities_index = self.liabilities_index  * (lu - ret_usd) / lu;
-        } else {
-          // top left -> owe more, own more
-          self.liabilities_index = self.liabilities_index * (lu + ret_usd) / lu;
-          self.assets_index = self.assets_index * (au + size) / au;
-        }
-        info!("post a: {} post l: {}", self.assets_index, self.liabilities_index);
-
         self.exrd_vault.put(ret);
 
         // todo: authorize question on alpha
         alpha.call_raw::<()>("aa_rope", scrypto_args!(profit));
       } else {
         // todo double check
-
-        let size_usd = size / self.guarded_get_rescaled_oracle().unwrap();
-
-        let c = 
-          (self.xrd_vault.amount() + self.xrdexrd*(self.exrd_vault.amount() + size))
-          / self.assets_lp_total;
-
-        // ensures that assets index doesn't go above total assets
-        if tcr > self.ip && self.assets_index * ((au + size_usd) / au) < c {
-          // bottom right -> owe more, own more
-          self.assets_index = self.assets_index * (au + ret.amount()) / au;
-          self.liabilities_index = self.liabilities_index * (lu + size_usd) / lu;
-        } else {
-          // bottom left -> owe less, own less
-          self.assets_index = self.assets_index * (au - size_usd) / au;
-          self.liabilities_index = self.liabilities_index * (lu - ret.amount()) / lu;
-        }
-
         self.liabilities_total -= ret.amount();
         Self::authorize(&mut self.power_usd, || {
           ResourceManager::from(self.eusd_resource).burn(ret)
@@ -812,7 +749,7 @@ mod usd {
     pub fn guarded_get_rescaled_oracle(&mut self) -> Option<Decimal> {
       if let Some(usdxrd) = self.guarded_get_oracle() {
         // USD/EXRD = USD/XRD * XRD/EXRD 
-        Some(usdxrd * self.xrdexrd(dec!(1)))
+        Some(usdxrd * self.xrdexrd())
       } else {
         None
       }
