@@ -54,9 +54,12 @@ mod tri {
         OwnerRole::Fixed(rule!(require(power_alpha))),
         rule!(require(power_tri.resource_address())),
         (t1, t2),
+        None
       );
 
-      let lp_ga: GlobalAddress = pool.get_metadata("pool_unit").expect("incoherence");
+      let lp_ga: GlobalAddress = pool.get_metadata("pool_unit")
+        .expect("incoherence").expect("incoherence"); // :^)
+
       // yes, this is the best way afaik lmao
       let lp_ra = ResourceAddress::new_or_panic(Into::<[u8; 30]>::into(lp_ga));
 
@@ -205,7 +208,7 @@ mod tri {
     }
 
     // dumps current # of in each bucket
-    pub fn vault_reserves(&self) -> BTreeMap<ResourceAddress, Decimal> {
+    pub fn vault_reserves(&self) -> IndexMap<ResourceAddress, Decimal> {
       let pool: Global<TwoResourcePool> = self.pool.into();
 
       pool.get_vault_amounts()

@@ -1,6 +1,4 @@
 use scrypto::prelude::*;
-use scrypto::engine::scrypto_env::ScryptoEnv;
-use scrypto::api::ClientBlueprintApi;
 
 // ZERO-TH DAO
 // DELPOYS EVERYTHING, AND THEN IS REBORN ANEW
@@ -104,7 +102,7 @@ mod dao {
 
       let dao_addr = Self {
         phase: 1u64,
-        power_dao: Vault::with_bucket(power_dao),
+        power_dao: Vault::with_bucket(power_dao.into()),
         souls: (
           power_alpha.resource_address(), 
           power_delta.resource_address(), 
@@ -117,10 +115,10 @@ mod dao {
         // phase 2
         tri_p,
         power_azero: power_azero.address(),
-        power_tri: Vault::with_bucket(power_tri),
+        power_tri: Vault::with_bucket(power_tri.into()),
         exrd,
 
-        power_delta: Vault::with_bucket(power_delta),
+        power_delta: Vault::with_bucket(power_delta.into()),
         delta_p,
         delta_whitelist: vec![],
         real: Vault::with_bucket(real),
@@ -139,8 +137,7 @@ mod dao {
       let alpha_resource = power_alpha.resource_address();
       // let _omega_resource = power_omega.resource_address();
 
-      let out = ScryptoEnv
-        .call_function(
+      let out = ScryptoVmV1Api::blueprint_call(
             alpha_p,
             "Alpha",
             "from_nothing",
@@ -149,8 +146,7 @@ mod dao {
               power_alpha.take(dec!(1)), power_azero,
               bang, bang, bang
             )
-        )
-        .unwrap();
+        );
       let alpha_addr: ComponentAddress = scrypto_decode(&out).unwrap();
 
       // let ap: Global<PackageStub> = alpha_p.into();
@@ -162,8 +158,7 @@ mod dao {
       //   )
       // );
   
-      let out = ScryptoEnv
-        .call_function(
+      let out = ScryptoVmV1Api::blueprint_call(
             usd_p,
             "Usd",
             "from_nothing",
@@ -172,8 +167,7 @@ mod dao {
               power_eux.resource_address().clone(), power_usd,
               exrd, u_lower, u_upper, u_flash_fee, u_mock_oracle
             )
-        )
-        .unwrap();
+        );
       let (usd_addr, eusd_resource): (ComponentAddress, ResourceAddress) = 
         scrypto_decode(&out).unwrap();
 
@@ -186,8 +180,7 @@ mod dao {
       //   )
       // );
 
-      let out = ScryptoEnv
-        .call_function(
+      let out = ScryptoVmV1Api::blueprint_call(
             eux_p,
             "Eux",
             "from_nothing",
@@ -195,8 +188,7 @@ mod dao {
               alpha_addr, alpha_resource, power_azero,
               power_eux, eusd_resource, exrd, e_swap_fee
             )
-        )
-        .unwrap();
+        );
       let (eux_addr, euxlp_resource): (ComponentAddress, ResourceAddress) = 
         scrypto_decode(&out).unwrap();
       
@@ -245,7 +237,7 @@ mod dao {
       the_zero.burn();
     
       // todo remove alpha
-      (dao_addr, power_alpha)
+      (dao_addr, power_alpha.into())
     }
 
     // deploy second part
@@ -266,8 +258,7 @@ mod dao {
       let t_w2 = dec!("0.10");
       let t_swap_fee = dec!("0.997");
 
-      let out = ScryptoEnv
-        .call_function(
+      let out = ScryptoVmV1Api::blueprint_call(
             self.tri_p,
             "Tri",
             "from_nothing",
@@ -278,14 +269,12 @@ mod dao {
               self.euxlp, t_w2,
               t_swap_fee
             )
-        )
-        .unwrap();
+        );
       let (tri_addr, tlp_resource): (ComponentAddress, ResourceAddress) = 
         scrypto_decode(&out).unwrap();
 
       self.delta_whitelist.push((tlp_resource, dec!(0)));
-      let out = ScryptoEnv
-        .call_function(
+      let out = ScryptoVmV1Api::blueprint_call(
             self.delta_p,
             "Delta",
             "from_nothing",
@@ -296,8 +285,7 @@ mod dao {
               self.real.take_all(), // TODO for now drops ALL real into AA use
               self.euxlp
             )
-        )
-        .unwrap();
+        );
       let delta_addr: ComponentAddress = 
         scrypto_decode(&out).unwrap();
 

@@ -104,7 +104,7 @@ mod eux {
       assert!( self.pool.0.amount() == dec!(0),
         "first deposit into an already running pool");
 
-      let initmint = (b1.amount() * b2.amount()).sqrt().unwrap();
+      let initmint = (b1.amount() * b2.amount()).checked_sqrt().unwrap();
 
       self.pool_lp.1 += initmint;
       self.pool.0.put(b1);
@@ -408,7 +408,7 @@ mod eux {
       if direction {
         if target < self.spot_price() {
           return Some( 
-            ((self.pool.0.amount() * self.pool.1.amount() / target).sqrt().expect("incoherence")
+            ((self.pool.0.amount() * self.pool.1.amount() / target).checked_sqrt().expect("incoherence")
             - self.pool.0.amount()) / self.swap_fee 
           )
         } 
@@ -416,7 +416,7 @@ mod eux {
       } else {
         if target > self.spot_price() {
           return Some(
-            ((self.pool.0.amount() * self.pool.1.amount() * target).sqrt().expect("incoherence")
+            ((self.pool.0.amount() * self.pool.1.amount() * target).checked_sqrt().expect("incoherence")
             - self.pool.1.amount()
             ) / self.swap_fee 
           )
