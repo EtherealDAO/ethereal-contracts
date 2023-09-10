@@ -42,7 +42,7 @@ mod tri {
       power_alpha: ResourceAddress, power_azero: ResourceAddress,
       power_tri: Bucket, 
       t1: ResourceAddress, t1w: Decimal, t2: ResourceAddress, t2w: Decimal,
-      swap_fee: Decimal )-> (ComponentAddress, ResourceAddress) {
+      swap_fee: Decimal, bang: ComponentAddress )-> (ComponentAddress, ResourceAddress) {
      
       assert!( t1w + t2w == dec!("1") && t1w > dec!("0") && t2w > dec!("0"), 
         "weights must sum to 1 and both be positive");
@@ -51,11 +51,33 @@ mod tri {
         "fee must be smaller than 10% and positive");
 
       let pool: Global<TwoResourcePool> = Blueprint::<TwoResourcePool>::instantiate(
-        OwnerRole::Fixed(rule!(require(power_alpha))),
+        // using power tri cause it's super annoying to tie it to power alpha (and use it here)
+        OwnerRole::Fixed(rule!(require(power_tri.resource_address()))),
         rule!(require(power_tri.resource_address())),
         (t1, t2),
         None
       );
+
+      let mut power_tri = Vault::with_bucket(power_tri);
+
+      Self::authorize(&mut power_tri, || {
+        pool.set_metadata(
+          "name",
+          "Ethereal TLP".to_owned()
+        );
+        pool.set_metadata(
+          "symbol",
+          "ETLP".to_owned()
+        );
+        pool.set_metadata(
+          "dapp_definitions",
+          vec!(GlobalAddress::from(bang))
+        );
+        pool.set_metadata(
+          "icon_url",
+          Url::of("https://cdn.discordapp.com/attachments/1092987092864335884/1095874817758081145/logos1.jpeg")
+        );
+      });
 
       let lp_ga: GlobalAddress = pool.get_metadata("pool_unit")
         .expect("incoherence").expect("incoherence"); // :^)
@@ -65,7 +87,7 @@ mod tri {
 
       let a1 = Self {
         alpha_addr,
-        power_tri: Vault::with_bucket(power_tri),
+        power_tri,
         resources: ((t1, t1w), (t2, t2w)),
         pool: pool.address(),
         swap_fee,
@@ -77,6 +99,20 @@ mod tri {
         roles!(
           alpha => rule!(require(power_alpha));
           azero => rule!(require(power_azero));
+        )
+      )
+      .metadata(
+        metadata!(
+          roles {
+            metadata_setter => rule!(require(power_alpha));
+            metadata_setter_updater => rule!(deny_all);
+            metadata_locker => rule!(deny_all);
+            metadata_locker_updater => rule!(deny_all);
+          },
+          init {
+            "dapp_definition" =>
+              GlobalAddress::from(bang), updatable;
+          }
         )
       )
       .globalize()

@@ -39,7 +39,7 @@ mod eux {
     pub fn from_nothing(alpha_addr: ComponentAddress, 
       power_alpha: ResourceAddress, power_azero: ResourceAddress, power_eux: Bucket, 
       t1: ResourceAddress, t2: ResourceAddress,
-      swap_fee: Decimal )-> (ComponentAddress, ResourceAddress) {
+      swap_fee: Decimal, bang: ComponentAddress )-> (ComponentAddress, ResourceAddress) {
 
       // assumed order: EUSD is t1
       // and EXRD is t2
@@ -53,6 +53,11 @@ mod eux {
             init {
                 "name" => "Ethereal EUSD/EXRD LP", locked;
                 "symbol" => "EUXLP", locked;
+                "dapp_definitions" =>
+                  vec!(GlobalAddress::from(bang)), updatable;
+                "icon_url" =>
+                  Url::of("https://cdn.discordapp.com/attachments/1092987092864335884/1095874817758081145/logos1.jpeg"),
+                  updatable;
             }
         ))
         .burn_roles(burn_roles!(
@@ -81,6 +86,20 @@ mod eux {
         roles!(
           azero => rule!(require(power_azero));
           alpha => rule!(require(power_alpha));
+        )
+      )
+      .metadata(
+        metadata!(
+          roles {
+            metadata_setter => rule!(require(power_alpha));
+            metadata_setter_updater => rule!(deny_all);
+            metadata_locker => rule!(deny_all);
+            metadata_locker_updater => rule!(deny_all);
+          },
+          init {
+            "dapp_definition" =>
+              GlobalAddress::from(bang), updatable;
+          }
         )
       )
       .globalize()

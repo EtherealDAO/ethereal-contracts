@@ -75,6 +75,7 @@ mod usd {
     // xrd + exrd 
     exrd_vault: Vault,
     xrd_vault: Vault,
+    exrd_validator: ComponentAddress,
 
     ep: Decimal,
     mcr: Decimal,
@@ -100,7 +101,8 @@ mod usd {
   impl Usd {
     pub fn from_nothing(alpha_addr: ComponentAddress, power_alpha: ResourceAddress,
       power_eux: ResourceAddress, power_usd: Bucket, exrd_resource: ResourceAddress, 
-      lower_bound: Decimal, upper_bound: Decimal, flash_fee: Decimal, 
+      exrd_validator: ComponentAddress,
+      lower_bound: Decimal, upper_bound: Decimal, flash_fee: Decimal, bang: ComponentAddress,
       mock_oracle: Decimal
       ) -> (ComponentAddress, ResourceAddress) {
 
@@ -137,6 +139,11 @@ mod usd {
           init {
             "name" => "Ethereal USD".to_owned(), updatable;
             "symbol" => "EUSD".to_owned(), updatable;
+            "icon_url" => 
+              Url::of("https://cdn.discordapp.com/attachments/1092987092864335884/1149733059118239774/logos1_1_1.jpeg")
+              , updatable;
+            "dapp_definitions" =>
+              vec!(GlobalAddress::from(bang)), updatable;
           }
         ))
         .mint_roles(mint_roles!(
@@ -162,6 +169,11 @@ mod usd {
           init {
             "name" => "Ethereal ECDP Ownership Badge".to_owned(), updatable;
             "symbol" => "ECDP", updatable;
+            "key_image_url" => 
+              Url::of("https://cdn.discordapp.com/attachments/1092987092864335884/1095874817758081145/logos1.jpeg")
+              , updatable;
+            "dapp_definitions" =>
+              vec!(GlobalAddress::from(bang)), updatable;
           }
         ))
         .mint_roles(mint_roles!(
@@ -195,6 +207,7 @@ mod usd {
         
         exrd_vault: Vault::new(exrd_resource),
         xrd_vault: Vault::new(XRD),
+        exrd_validator,
 
         // TODO placeholders
         ep: dec!("1.1"),
@@ -221,6 +234,20 @@ mod usd {
           dex => rule!(require(power_eux));
         )
       )
+      .metadata(
+        metadata!(
+          roles {
+            metadata_setter => rule!(require(power_alpha));
+            metadata_setter_updater => rule!(deny_all);
+            metadata_locker => rule!(deny_all);
+            metadata_locker_updater => rule!(deny_all);
+          },
+          init {
+            "dapp_definition" =>
+              GlobalAddress::from(bang), updatable;
+          }
+        )
+      )
       .globalize()
       .address();
 
@@ -236,7 +263,6 @@ mod usd {
     }
 
     pub fn tcr(&mut self) -> Decimal {
-      // TODO call validator
       if let Some(usdxrd) = self.guarded_get_oracle() {
         let usd_xrd = self.xrd_vault.amount() * (dec!(1) / usdxrd); 
         let usd_exrd = self.exrd_vault.amount() * (dec!(1) / (usdxrd * self.xrdexrd()));
@@ -258,11 +284,25 @@ mod usd {
       panic!("OUTDATED ORACLE");
     }
 
+    // how much XRD is each EXRD worth, i.e. xrd/exrd 
+    // system assumes no time value on unstake 
+    // input as size in EXRD, inp 1 ~> returns >= 1
+    // additionally it corrects the asset index by bumping it with stake rewards from exrd
+    pub fn xrdexrd(&self) -> Decimal {
+      // fuck type safety
+      let valid: Global<AnyComponent> = self.exrd_validator.into();
+
+      valid.call_raw("get_redemption_value", scrypto_args!(dec!(1)))
+    }
+
     // conversion of asset_lp units 
     // returns the value of a 1 asset_lp in EUSD
     // i.e. EUSD/asset_lp
     pub fn asset_lp_usd(&mut self) -> Decimal {
       if let Some(usdxrd) = self.guarded_get_oracle() {
+        if self.assets_lp_total == dec!(0) {
+          return dec!(1) * (dec!(1) / usdxrd)
+        }
         let usd_xrd = self.xrd_vault.amount() * (dec!(1) / usdxrd); 
         let usd_exrd = self.exrd_vault.amount() * (dec!(1) / (usdxrd * self.xrdexrd()));
         return (usd_xrd + usd_exrd) / self.assets_lp_total;
@@ -273,6 +313,9 @@ mod usd {
     // XRD/asset_lp
     // how much xrd is each asset_lp worth
     pub fn asset_lp_xrd(&mut self) -> Decimal {
+      if self.assets_lp_total == dec!(0) {
+        return dec!(1)
+      }
       return ( self.xrd_vault.amount() +  self.xrdexrd()*self.exrd_vault.amount() ) 
         / self.assets_lp_total;
     }
@@ -280,6 +323,9 @@ mod usd {
     // conversion of liability_lp units 
     // EUSD / lia_lp
     pub fn liability_lp_usd(&self) -> Decimal {
+      if self.liabilities_lp_total == dec!(0) {
+        return dec!(1)
+      }
       return self.liabilities_total / self.liabilities_lp_total;
     }
 
@@ -311,7 +357,6 @@ mod usd {
 
       let lp_usd = self.liability_lp_usd();
 
-      // if first mint, lia_lp = 1
       let cr = 
         self.asset_lp_usd()*data.assets_lp 
         / ( new_liabilities_lp * lp_usd );
@@ -377,16 +422,15 @@ mod usd {
       let id = nft.local_id();
       let data = nft.data();
 
-      let lp_xrd = self.asset_lp_xrd();
       let size = input.amount();
 
       let added_assets_lp = 
         if input.resource_address() == self.exrd_vault.resource_address()
         { self.exrd_vault.put(input);
-          self.xrdexrd()*size / lp_xrd
+          self.xrdexrd()*size / self.asset_lp_xrd()
         } else {
           self.xrd_vault.put(input);
-          size / lp_xrd
+          size / self.asset_lp_xrd()
         };
       
       self.assets_lp_total += added_assets_lp;
@@ -509,21 +553,6 @@ mod usd {
       });
     }
 
-    // TODO: check that this is called on every asset_lp interaction
-    // how much XRD is each EXRD worth, i.e. xrd/exrd 
-    // system assumes no time value on unstake 
-    // input as size in EXRD, inp 1 ~> returns >= 1
-    // additionally it corrects the asset index by bumping it with stake rewards from exrd
-    pub fn xrdexrd(&self) -> Decimal {
-      // TODO call validator
-      // https://github.com/radixdlt/radixdlt-scrypto/blob/main/
-      // radix-engine/src/blueprints/consensus_manager/validator.rs#L1037
-      // ^ reeeeeee
-      // if they don't fix -> add to oracle
-
-      dec!(1) // todo update 
-    }
-
     // Flash Mint / Loan parts
 
     // re: flash mint/loans
@@ -543,6 +572,8 @@ mod usd {
       // TODO : in unindexified version when flash loaned the system
       //        needs to work correctly 
       //        despite "technically" possibly being underwater
+      //
+      //        take 1: block MP and liq when in any way flashed 
 
       self.fl_active = true;
 
@@ -664,6 +695,9 @@ mod usd {
       // todo panic if flashed
       // ^ is it even needed? shouldn't be a problem really
 
+      assert!( !self.fl_active && !self.fm_active,
+        "can't liquidate during flash transactions");
+
       // EUSD/EXRD
       let usdexrd = self.guarded_get_rescaled_oracle().expect("OUTDATED ORACLE");
 
@@ -701,13 +735,29 @@ mod usd {
           None
         }
       } else {
+        let xrdexrd = self.xrdexrd();
         // above emergency, can do MPdown
         if tcr > self.ep {
           Self::authorize(&mut self.power_usd, || {            
             if self.exrd_vault.amount() <= size {
-              panic!("todo -- NEEDS VALIDATOR API");
-              // TODO: pull liq from XRD and change into EXRD 
-              // (and if that's not enough, protocol is broke lol)
+              let valid: Global<AnyComponent> = self.exrd_validator.into();
+              let diff = size - self.exrd_vault.amount();
+              let reqxrd = diff * dec!(1) / xrdexrd;
+
+              if reqxrd >= self.xrd_vault.amount() {
+                let newexrd = valid.call_raw(
+                  "stake",
+                  scrypto_args!(self.xrd_vault.take(reqxrd))
+                );
+                self.exrd_vault.put(newexrd);
+
+                Some(self.exrd_vault.take(size))
+              } else {
+                // (protocol is broke lol)
+                // returnning None, no good option here
+                // TODO: maybe halt the system?
+                None
+              }
             } else {
               Some(self.exrd_vault.take(size))
             }

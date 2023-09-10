@@ -32,7 +32,7 @@ mod delta {
   impl Delta {
     pub fn from_nothing(dao_addr: ComponentAddress, power_zero: ResourceAddress,
       power_alpha: ResourceAddress, power_delta: Bucket, whitelist: Vec<(ResourceAddress, Decimal)>,
-      real:Bucket, euxlp: ResourceAddress
+      real:Bucket, euxlp: ResourceAddress, bang: ComponentAddress
     ) -> ComponentAddress {
       // needs to whitelist
       // real, tlp, euxlp, exrd, xrd, eusd
@@ -57,6 +57,20 @@ mod delta {
         roles!(
           alpha => rule!(require(power_alpha));
           zero => rule!(require(power_zero));
+        )
+      )
+      .metadata(
+        metadata!(
+          roles {
+            metadata_setter => rule!(require(power_zero));
+            metadata_setter_updater => rule!(deny_all);
+            metadata_locker => rule!(deny_all);
+            metadata_locker_updater => rule!(deny_all);
+          },
+          init {
+            "dapp_definition" =>
+              GlobalAddress::from(bang), updatable;
+          }
         )
       )
       .globalize()

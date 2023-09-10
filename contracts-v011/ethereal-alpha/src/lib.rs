@@ -36,6 +36,7 @@ mod alpha {
       dao_addr: ComponentAddress, power_zero: ResourceAddress, 
       power_alpha: Bucket, power_azero: ResourceAddress,
       usd_addr: ComponentAddress, eux_addr: ComponentAddress, tri_addr: ComponentAddress,
+      bang: ComponentAddress
     ) -> ComponentAddress {
       // power azero is passed in
       // dao script is deferred to for all the braiding
@@ -56,6 +57,20 @@ mod alpha {
       .roles(
         roles!(
           zero => rule!(require(power_zero));
+        )
+      )
+      .metadata(
+        metadata!(
+          roles {
+            metadata_setter => rule!(require(power_zero));
+            metadata_setter_updater => rule!(deny_all);
+            metadata_locker => rule!(deny_all);
+            metadata_locker_updater => rule!(deny_all);
+          },
+          init {
+            "dapp_definition" =>
+              GlobalAddress::from(bang), updatable;
+          }
         )
       )
       .globalize()
@@ -108,20 +123,30 @@ mod alpha {
         let tri: Global<AnyComponent> = self.app_addrs.2.into();
         // TODO: minimum price at which it adds it
         // ^ derive from avg stake value or something
-        let (tlp, remainder) = 
+        let spot = 
+          tri.call_raw::<Decimal>("spot_price", scrypto_args!());
+
+        // if spot is over a minimum price 
+        if spot > dec!("0.5") {
+          let (tlp, remainder) = 
           tri.call_raw::<(Bucket, Option<Bucket>)>("add_liquidity", scrypto_args!(real, input));
 
-        info!("aa_rope OUT"); 
+          info!("aa_rope OUT"); 
 
-        Self::authorize(&mut self.power_alpha, || { 
-          delta.call_raw::<()>
-            ("aa_out", scrypto_args!(remainder));
-          delta.call_raw::<()>
-            ("deposit", scrypto_args!(tlp));
-        });
+          Self::authorize(&mut self.power_alpha, || { 
+            delta.call_raw::<()>
+              ("aa_out", scrypto_args!(remainder));
+            delta.call_raw::<()>
+              ("deposit", scrypto_args!(tlp));
+          });
+        } else {
 
+          Self::authorize(&mut self.power_alpha, || { 
+            delta.call_raw::<()>
+              ("aa_out", scrypto_args!(Some(input)));
+          });
+        }
       } else {
-
         Self::authorize(&mut self.power_alpha, || { 
           delta.call_raw::<()>
             ("aa_out", scrypto_args!(Some(input)));

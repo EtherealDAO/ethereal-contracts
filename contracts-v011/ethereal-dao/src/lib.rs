@@ -37,14 +37,17 @@ mod dao {
     delta_p: PackageAddress,
     delta_whitelist: Vec<(ResourceAddress, Decimal)>,
     real: Vault,
-    euxlp: ResourceAddress
+    euxlp: ResourceAddress,
+    bang: ComponentAddress
   }
 
   impl Dao {
+    // bang is the dapp definition addr
+    // also used as dummy addr be4 braiding
     pub fn from_nothing( // todo Omega
       alpha_p: PackageAddress, delta_p: PackageAddress,
       usd_p: PackageAddress, eux_p: PackageAddress, tri_p: PackageAddress,
-      real: Bucket, exrd: ResourceAddress, bang: ComponentAddress
+      real: Bucket, exrd: ResourceAddress, exrd_validator: ComponentAddress, bang: ComponentAddress
       ) -> (ComponentAddress, Bucket) {
       // todo for now just a mock script helping the setup/reproducible redeploy
       // + addr beacon
@@ -122,13 +125,28 @@ mod dao {
         delta_p,
         delta_whitelist: vec![],
         real: Vault::with_bucket(real),
-        euxlp: power_zero.address()
+        euxlp: power_zero.address(),
+        bang
       }
       .instantiate()
       .prepare_to_globalize(OwnerRole::None)
       .roles(
         roles!(
           zero => rule!(require(power_zero.address()));
+        )
+      )
+      .metadata(
+        metadata!(
+          roles {
+            metadata_setter => rule!(require(power_zero.address()));
+            metadata_setter_updater => rule!(deny_all);
+            metadata_locker => rule!(deny_all);
+            metadata_locker_updater => rule!(deny_all);
+          },
+          init {
+            "dapp_definition" =>
+              GlobalAddress::from(bang), updatable;
+          }
         )
       )
       .globalize()
@@ -144,7 +162,7 @@ mod dao {
             scrypto_args!(
               dao_addr, power_zero,
               power_alpha.take(dec!(1)), power_azero,
-              bang, bang, bang
+              bang, bang, bang, bang
             )
         );
       let alpha_addr: ComponentAddress = scrypto_decode(&out).unwrap();
@@ -165,7 +183,7 @@ mod dao {
             scrypto_args!(
               alpha_addr, alpha_resource,
               power_eux.resource_address().clone(), power_usd,
-              exrd, u_lower, u_upper, u_flash_fee, u_mock_oracle
+              exrd, exrd_validator, u_lower, u_upper, u_flash_fee, bang, u_mock_oracle
             )
         );
       let (usd_addr, eusd_resource): (ComponentAddress, ResourceAddress) = 
@@ -186,7 +204,7 @@ mod dao {
             "from_nothing",
             scrypto_args!(
               alpha_addr, alpha_resource, power_azero,
-              power_eux, eusd_resource, exrd, e_swap_fee
+              power_eux, eusd_resource, exrd, e_swap_fee, bang
             )
         );
       let (eux_addr, euxlp_resource): (ComponentAddress, ResourceAddress) = 
@@ -267,7 +285,8 @@ mod dao {
               self.power_tri.take_all(),
               self.real.resource_address(), t_w1,
               self.euxlp, t_w2,
-              t_swap_fee
+              t_swap_fee,
+              self.bang
             )
         );
       let (tri_addr, tlp_resource): (ComponentAddress, ResourceAddress) = 
@@ -283,7 +302,8 @@ mod dao {
               alpha_resource, self.power_delta.take_all(),
               &self.delta_whitelist,
               self.real.take_all(), // TODO for now drops ALL real into AA use
-              self.euxlp
+              self.euxlp,
+              self.bang
             )
         );
       let delta_addr: ComponentAddress = 
