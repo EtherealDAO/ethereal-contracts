@@ -8,6 +8,7 @@ mod alpha {
   enable_method_auth! {
     roles {
       zero => updatable_by: [];
+      omega => updatable_by: [];
       // usd => updatable_by: []; TODO RESTRICT
     },
     methods {
@@ -15,6 +16,7 @@ mod alpha {
       aa_rope => PUBLIC; // TODO restrict?
       set_app_addrs => restrict_to: [zero];
       get_app_addrs => PUBLIC;
+      prove_alpha => restrict_to: [omega];
     }
   }
 
@@ -34,7 +36,7 @@ mod alpha {
   impl Alpha {
     pub fn from_nothing(
       dao_addr: ComponentAddress, power_zero: ResourceAddress, 
-      power_alpha: Bucket, power_azero: ResourceAddress,
+      power_omega:ResourceAddress, power_alpha: Bucket, power_azero: ResourceAddress,
       usd_addr: ComponentAddress, eux_addr: ComponentAddress, tri_addr: ComponentAddress,
       bang: ComponentAddress
     ) -> ComponentAddress {
@@ -57,6 +59,7 @@ mod alpha {
       .roles(
         roles!(
           zero => rule!(require(power_zero));
+          omega => rule!((require(power_omega)));
         )
       )
       .metadata(
@@ -160,6 +163,11 @@ mod alpha {
 
     pub fn set_app_addrs(&mut self, new: (ComponentAddress, ComponentAddress, ComponentAddress)) {
       self.app_addrs = new;
+    }
+
+    // pupeteer alpha by omega
+    pub fn prove_alpha(&self) -> FungibleProof {
+      self.power_alpha.as_fungible().create_proof_of_amount(dec!(1))
     }
 
 

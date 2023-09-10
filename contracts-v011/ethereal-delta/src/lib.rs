@@ -13,6 +13,7 @@ mod delta {
       aa_tap => restrict_to: [alpha];
       aa_out => restrict_to: [alpha];
       deposit => PUBLIC;
+      prove_delta => restrict_to: [alpha];
     }
   }
 
@@ -112,6 +113,11 @@ mod delta {
 
     pub fn to_nothing(&mut self, ) {
 
+    }
+
+    // pupeteer delta by alpha
+    pub fn prove_delta(&self) -> FungibleProof {
+      self.power_delta.as_fungible().create_proof_of_amount(dec!(1))
     }
 
     // todo move from treasury to aa treasury
