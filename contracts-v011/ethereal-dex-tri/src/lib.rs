@@ -60,30 +60,37 @@ mod tri {
 
       let mut power_tri = Vault::with_bucket(power_tri);
 
-      Self::authorize(&mut power_tri, || {
-        pool.set_metadata(
-          "name",
-          "Ethereal TLP".to_owned()
-        );
-        pool.set_metadata(
-          "symbol",
-          "ETLP".to_owned()
-        );
-        pool.set_metadata(
-          "dapp_definitions",
-          vec!(GlobalAddress::from(bang))
-        );
-        pool.set_metadata(
-          "icon_url",
-          Url::of("https://cdn.discordapp.com/attachments/1092987092864335884/1095874817758081145/logos1.jpeg")
-        );
-      });
-
       let lp_ga: GlobalAddress = pool.get_metadata("pool_unit")
         .expect("incoherence").expect("incoherence"); // :^)
 
       // yes, this is the best way afaik lmao
       let lp_ra = ResourceAddress::new_or_panic(Into::<[u8; 30]>::into(lp_ga));
+
+      Self::authorize(&mut power_tri, || {
+        let rm = ResourceManager::from(lp_ra);
+
+        rm.set_metadata(
+          "name",
+          "Ethereal TLP".to_owned()
+        );
+        rm.set_metadata(
+          "symbol",
+          "ETLP".to_owned()
+        );
+        rm.set_metadata(
+          "icon_url",
+          Url::of("https://cdn.discordapp.com/attachments/1092987092864335884/1095874817758081145/logos1.jpeg")
+        );
+        rm.set_metadata(
+          "dapp_definitions",
+          vec!(GlobalAddress::from(bang))
+        );
+
+        pool.set_metadata(
+          "dapp_definition",
+          GlobalAddress::from(bang)
+        );
+      });
 
       let a1 = Self {
         alpha_addr,

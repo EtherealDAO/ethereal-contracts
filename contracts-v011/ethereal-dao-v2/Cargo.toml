@@ -1,12 +1,11 @@
 [package]
-name = "ethereal-dex-tri"
+name = "ethereal-dao-v2"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
 sbor = { git = "https://github.com/radixdlt/radixdlt-scrypto", tag = "v0.12.1" }
 scrypto = { git = "https://github.com/radixdlt/radixdlt-scrypto", tag = "v0.12.1" }
-scrypto_math = { git = "https://github.com/ociswap/scrypto-math", branch = "scrypto-v012" }
 
 [dev-dependencies]
 transaction = { git = "https://github.com/radixdlt/radixdlt-scrypto", tag = "v0.12.1" }

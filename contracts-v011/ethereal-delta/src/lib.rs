@@ -14,6 +14,7 @@ mod delta {
       aa_out => restrict_to: [alpha];
       deposit => PUBLIC;
       prove_delta => restrict_to: [alpha];
+      set_dao_addr => restrict_to: [zero];
     }
   }
 
@@ -118,6 +119,10 @@ mod delta {
     // pupeteer delta by alpha
     pub fn prove_delta(&self) -> FungibleProof {
       self.power_delta.as_fungible().create_proof_of_amount(dec!(1))
+    }
+
+    pub fn set_dao_addr(&mut self, new: ComponentAddress) {
+      self.dao_addr = new;
     }
 
     // todo move from treasury to aa treasury

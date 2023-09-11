@@ -51,6 +51,8 @@ mod omega {
       unstake => PUBLIC;
       add_proposal => PUBLIC;
       vote => PUBLIC;
+      set_dao_addr => restrict_to: [zero];
+      finalize_proposal => PUBLIC;
     }
   }
   
@@ -60,7 +62,6 @@ mod omega {
 
     // REAL token
     token: Vault,
-    token_issued: Decimal,
 
     // this is V1 so REAL only
     staked_vault: Vault,
@@ -84,8 +85,6 @@ mod omega {
     ) -> ComponentAddress {
       
       let staked_resource = token.resource_address();
-      let token_issued = 
-        ResourceManager::from(staked_resource).total_supply().unwrap() - token.amount();
       let staked_vault = Vault::new(staked_resource);
 
       let nft_resource = ResourceBuilder::new_ruid_non_fungible::<UserReceipt>(OwnerRole::None)
@@ -136,7 +135,6 @@ mod omega {
         staked_vault,
 
         token: Vault::with_bucket(token),
-        token_issued,
 
         proposal_index,
         proposals,
@@ -279,13 +277,13 @@ mod omega {
     }
 
     pub fn vote(&mut self, vote: Vote, proposal: u64, user: Proof) {
-      // is_active, Proposal, when_submitted, who_submitted
-      // vote_for, vote_against, vote_abstain
-      assert!( self.proposals.get(&proposal).unwrap().is_active, 
-        "vote on finalized proposal"); 
-
       // ensures proposal actually exist, and therefore user will be locked for a fixed time
       let mut p = self.proposals.get_mut(&proposal).unwrap();
+
+      // is_active, Proposal, when_submitted, who_submitted
+      // vote_for, vote_against, vote_abstain
+      assert!( p.is_active, 
+        "vote on finalized proposal"); 
 
       assert!(
         Clock::current_time_is_strictly_before( 
@@ -322,6 +320,23 @@ mod omega {
         Vote::Abstain if x > dec!(0) => p.deref_mut().votes_abstaining += x,
         _ => panic!("nonpositive vote")
       };
+    }
+
+    pub fn finalize_proposal(&mut self, proposal: u64) {
+      let mut p = self.proposals.get_mut(&proposal).unwrap();
+
+      assert!( p.is_active, 
+        "finalize on finalized proposal"); 
+
+      assert!(
+        Clock::current_time_is_strictly_after( 
+          p.when_submitted.add_days(self.vote_duration as i64).expect("days"), 
+          TimePrecision::Minute ),
+        "finalize before closed" );
+      
+      // TODO: if passed, execute
+
+      p.is_active = false;
     }
 
     pub fn to_nothing(&mut self) {
@@ -414,6 +429,9 @@ mod omega {
       }
     }
 
+    pub fn set_dao_addr(&mut self, new: ComponentAddress) {
+      self.dao_addr = new;
+    }
 
     fn authorize<F: FnOnce() -> O, O>(power: &mut Vault, f: F) -> O {
       let temp = power.as_fungible().take_all();

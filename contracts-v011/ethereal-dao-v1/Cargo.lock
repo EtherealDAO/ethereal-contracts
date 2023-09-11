@@ -308,7 +308,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "ethereal-dao"
+name = "ethereal-dao-v1"
 version = "0.1.0"
 dependencies = [
  "radix-engine",

@@ -17,6 +17,7 @@ mod alpha {
       set_app_addrs => restrict_to: [zero];
       get_app_addrs => PUBLIC;
       prove_alpha => restrict_to: [omega];
+      set_dao_addr => restrict_to: [zero];
     }
   }
 
@@ -36,7 +37,7 @@ mod alpha {
   impl Alpha {
     pub fn from_nothing(
       dao_addr: ComponentAddress, power_zero: ResourceAddress, 
-      power_omega:ResourceAddress, power_alpha: Bucket, power_azero: ResourceAddress,
+      power_omega: ResourceAddress, power_alpha: Bucket, power_azero: ResourceAddress,
       usd_addr: ComponentAddress, eux_addr: ComponentAddress, tri_addr: ComponentAddress,
       bang: ComponentAddress
     ) -> ComponentAddress {
@@ -163,6 +164,10 @@ mod alpha {
 
     pub fn set_app_addrs(&mut self, new: (ComponentAddress, ComponentAddress, ComponentAddress)) {
       self.app_addrs = new;
+    }
+
+    pub fn set_dao_addr(&mut self, new: ComponentAddress) {
+      self.dao_addr = new;
     }
 
     // pupeteer alpha by omega
