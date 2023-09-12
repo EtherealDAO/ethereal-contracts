@@ -17,9 +17,28 @@ pub enum Vote {
   Abstain
 }
 
+#[derive(ScryptoSbor, PartialEq, Clone)]
+pub enum EDaoProposal {
+  UpdateBranch(PackageAddress, String, String),
+  UpdateSelf(PackageAddress, String, String)
+}
+
+#[derive(ScryptoSbor, Clone)]
+pub enum EDaoVote {
+  For,
+  Against
+}
+
 #[derive(ScryptoSbor, Clone)]
 pub enum Action {
-  TextOnly(String)
+  TextOnly(String),
+
+  // EDAO actions
+  EDaoAddProposal(EDaoProposal),
+  EDaoVote(EDaoVote, u64), 
+
+  // Protocol (Parameter) Actions
+  EUSDChangeParam(u64, Decimal), // 0-based, change a single number
 }
 
 type Proposal = Vec<Action>;
@@ -103,6 +122,8 @@ mod omega {
               , updatable;
             "dapp_definitions" =>
               vec!(GlobalAddress::from(bang)), updatable;
+            "tags" => vec!["ethereal-dao".to_owned(), "staking".to_owned(), "badge".to_owned()], updatable;
+            "info_url" => Url::of("https://ethereal.systems"), updatable;
           }
         ))
         .mint_roles(mint_roles!(
@@ -161,11 +182,17 @@ mod omega {
           init {
             "dapp_definition" =>
               GlobalAddress::from(bang), updatable;
+            "tags" => vec!["ethereal-dao".to_owned(), 
+              "omega".to_owned()], updatable;
           }
         )
       )
       .globalize()
       .address()
+    }
+
+    pub fn to_nothing(&mut self) -> (Bucket, Bucket) {
+      (self.power_omega.take_all(), self.token.take_all())
     }
 
     pub fn new_user(&mut self) -> Bucket {
@@ -339,10 +366,6 @@ mod omega {
       p.is_active = false;
     }
 
-    pub fn to_nothing(&mut self) {
-
-    }
-
     // pupeteer omega by delta
     pub fn prove_omega(&self) -> FungibleProof {
       self.power_omega.as_fungible().create_proof_of_amount(dec!(1))
@@ -379,18 +402,18 @@ mod omega {
         }
       }
 
-      // fn check_edao_proposal(p: &EDaoProposal) {
-      //   match p {
-      //     EDaoProposal::UpdateBranch(_, s1, s2) => {
-      //       check_string(&*s1);
-      //       check_string(&*s2);
-      //     },
-      //     EDaoProposal::UpdateSelf(_, s1, s2) => {
-      //       check_string(&*s1);
-      //       check_string(&*s2);
-      //     }
-      //   }
-      // }
+      fn check_edao_proposal(p: &EDaoProposal) {
+        match p {
+          EDaoProposal::UpdateBranch(_, s1, s2) => {
+            check_string(&*s1);
+            check_string(&*s2);
+          },
+          EDaoProposal::UpdateSelf(_, s1, s2) => {
+            check_string(&*s1);
+            check_string(&*s2);
+          }
+        }
+      }
 
       // fn check_delta_proposal(p: &DeltaProposal) {
       //   match p {
@@ -416,9 +439,13 @@ mod omega {
         // Action::ProtocolUpdateParams() => (), // TODO
         // Action::ProtocolUpdate() => (), // TODO
 
-        // // EDAO actions
-        // Action::EDaoAddProposal(p) => check_edao_proposal(&p),
-        // Action::EDaoVote(_, _) => (),
+        // EDAO actions
+        Action::EDaoAddProposal(p) => check_edao_proposal(&p),
+        Action::EDaoVote(_, _) => (),
+
+        // Protocol Param actions
+        Action::EUSDChangeParam(i,_) => assert!( *i < 6u64, "out of bounds" ),
+
 
         // // Alpha actions 
         // Action::AlphaChangeParams(_, _, _) => (),
@@ -426,6 +453,82 @@ mod omega {
         // // Delta actions 
         // Action::DeltaPuppeteer(p) => check_delta_proposal(&p),
         // Action::DeltaAllowSpend(_, _) => ()
+      }
+    }
+
+    // raw proposal execute logic
+    // it better fucking grab the Component/Package into the fucking scope
+    fn _execute_proposal(&mut self, prop: &Proposal) {
+      for action in prop {
+        self._execute_single_action(action);
+      }
+    }
+
+    // eval
+    fn _execute_single_action(&mut self, action: &Action) {
+      match action {
+        Action::TextOnly(_) => (),
+        // // Protocol actions
+        // Action::ProtocolUpdateParams() => (), // TODO
+        // Action::ProtocolUpdate() => (), // TODO
+
+        // EDAO actions
+        Action::EDaoAddProposal(edao_proposal) => {
+          let dao: Global<AnyComponent> = self.dao_addr.into();
+          dao.call_raw::<()>("add_proposal", scrypto_args!(edao_proposal, self.prove_omega()))
+        },
+        Action::EDaoVote(vote, proposal) => {
+          let dao: Global<AnyComponent> = self.dao_addr.into();
+          dao.call_raw::<()>("add_proposal", scrypto_args!(vote, proposal, self.prove_omega()))
+        }, 
+
+        // Protocol Param actions
+        Action::EUSDChangeParam(ix, new) => {
+          let dao: Global<AnyComponent> = self.dao_addr.into();
+          let (a, _, _) = dao.call_raw::<(ComponentAddress, ComponentAddress, ComponentAddress)>
+            ("get_branch_addrs", scrypto_args!());
+          
+          let alpha: Global<AnyComponent> = a.into();
+          let (u, _, _) = alpha.call_raw::<(ComponentAddress, ComponentAddress, ComponentAddress)>
+            ("get_app_addrs", scrypto_args!());
+
+          let usd: Global<AnyComponent> = u.into();
+          let mut params = usd.call_raw::<(Decimal, Decimal, Decimal, Decimal, Decimal, Decimal)>
+            ("get_params", scrypto_args!());
+
+          // :^)
+          match ix {
+            0 => params.0 = *new,
+            1 => params.1 = *new,
+            2 => params.2 = *new,
+            3 => params.3 = *new,
+            4 => params.4 = *new,
+            5 => params.5 = *new,
+            _ => panic!()
+          }
+          usd.call_raw::<()>("set_params", scrypto_args!(params));
+        }
+
+      //   // Alpha actions 
+      //   Action::AlphaChangeParams(vote_duration, vote_quorum, proposal_payment) => {
+      //     self.alpha_vote_duration = *vote_duration;
+      //     self.alpha_vote_quorum = *vote_quorum;
+      //     self.alpha_proposal_payment = *proposal_payment;
+      //   },
+
+      //   // Delta actions 
+      //   Action::DeltaPuppeteer(delta_proposal) => 
+      //     self.power_alpha.authorize(||
+      //       Delta::at(
+      //         Dao::at(self.dao_addr).get_branch_addrs().1
+      //       ).puppeteer(delta_proposal.clone())
+      //   ),
+      //   Action::DeltaAllowSpend(asset, amount) => 
+      //     self.power_alpha.authorize(|| 
+      //       Delta::at(
+      //         Dao::at(self.dao_addr).get_branch_addrs().1
+      //       ).allow_spend(*asset, *amount)
+      //   )
       }
     }
 

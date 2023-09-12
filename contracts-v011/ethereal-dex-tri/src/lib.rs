@@ -3,7 +3,6 @@ use scrypto_math::*;
 
 #[blueprint]
 mod tri {
-  // OWNER is Alpha
   enable_method_auth! {
     roles {
       alpha => updatable_by: [];
@@ -21,6 +20,7 @@ mod tri {
       spot_price => PUBLIC;
       swap => PUBLIC;
       vault_reserves => PUBLIC;
+      look_within => PUBLIC;
     }
   }
 
@@ -78,6 +78,14 @@ mod tri {
           "ETLP".to_owned()
         );
         rm.set_metadata(
+          "tags",
+          vec!["ethereal-dao".to_owned(), "lp".to_owned()]
+        );
+        rm.set_metadata(
+          "info_url",
+          Url::of("https://ethereal.systems")
+        );
+        rm.set_metadata(
           "icon_url",
           Url::of("https://cdn.discordapp.com/attachments/1092987092864335884/1095874817758081145/logos1.jpeg")
         );
@@ -119,6 +127,8 @@ mod tri {
           init {
             "dapp_definition" =>
               GlobalAddress::from(bang), updatable;
+            "tags" => vec!["ethereal-dao".to_owned(), 
+              "tri".to_owned()], updatable;
           }
         )
       )
@@ -128,22 +138,28 @@ mod tri {
       return (a1, lp_ra)
     }
 
-
-    // .metadata(metadata!(
-    //   init {
-    //     "name" => "Ethereal TriPoolLP", locked;
-    //     "symbol" => "TLP", locked;
-    //     "url" => "todo", locked;
-    //     "image" => "todo", locked;
-    //   }
-    // ))
-
     // AuthRule: power_zero
     // rips the soul out
     // the TriPool's TLP is managed by the native component
     // so the liquidity is left alone
     pub fn to_nothing(&mut self) -> Bucket {
       self.power_tri.take_all()
+    }
+
+    pub fn look_within(&self) -> 
+      (
+        ((ResourceAddress, Decimal), (ResourceAddress, Decimal)),
+        ComponentAddress,
+        Decimal,
+        bool
+      )
+      {
+      (
+        self.resources,
+        self.pool,
+        self.swap_fee,
+        self.stopped
+      )
     }
 
     // separated from instantiation for dao reasons
@@ -183,8 +199,9 @@ mod tri {
     }
 
     pub fn remove_liquidity(&mut self, input: Bucket) -> (Bucket, Bucket) {
-      // even if stopped or soulless, 
-      // can remove liquidity (in equal balance as at time of stop/soulrip)
+      assert!( !self.stopped && !self.power_tri.is_empty(),
+        "DEX stopped or empty");
+
       let mut pool: Global<TwoResourcePool> = self.pool.into();
 
       pool.redeem(input)

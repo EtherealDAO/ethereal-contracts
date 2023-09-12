@@ -1,28 +1,25 @@
 use scrypto::prelude::*;
 
-// let component: Global<AnyComponent> = Global(ObjectStub::new(ObjectStubHandle::Global(GlobalAddress::from(component_address))));
-// let return_value = component.call_raw::<ZygomebFancyReturnType>("method_name", scrypto_args!(param1));
-
 #[blueprint]
 mod alpha {
   enable_method_auth! {
     roles {
       zero => updatable_by: [];
+      azero => updatable_by: [];
       omega => updatable_by: [];
       // usd => updatable_by: []; TODO RESTRICT
     },
     methods {
       to_nothing => restrict_to: [zero];
       aa_rope => PUBLIC; // TODO restrict?
-      set_app_addrs => restrict_to: [zero];
+      set_app_addrs => restrict_to: [zero, azero];
       get_app_addrs => PUBLIC;
       prove_alpha => restrict_to: [omega];
+      prove_azero => restrict_to: [omega];
       set_dao_addr => restrict_to: [zero];
     }
   }
 
-  // static-participant multisig 
-  // self-governed via 3/3, each participant being a DAO branch
   struct Alpha {
     dao_addr: ComponentAddress,
     power_zero: ResourceAddress,
@@ -60,6 +57,7 @@ mod alpha {
       .roles(
         roles!(
           zero => rule!(require(power_zero));
+          azero => rule!((require(power_azero)));
           omega => rule!((require(power_omega)));
         )
       )
@@ -74,6 +72,8 @@ mod alpha {
           init {
             "dapp_definition" =>
               GlobalAddress::from(bang), updatable;
+            "tags" => vec!["ethereal-dao".to_owned(), 
+              "alpha".to_owned()], updatable;
           }
         )
       )
@@ -81,8 +81,8 @@ mod alpha {
       .address()
     }
 
-    pub fn to_nothing(&mut self) {
-
+    pub fn to_nothing(&mut self) -> Bucket {
+      self.power_alpha.take_all()
     }
 
     // TODO: auth? is it worth guarding against someone 
@@ -131,6 +131,7 @@ mod alpha {
           tri.call_raw::<Decimal>("spot_price", scrypto_args!());
 
         // if spot is over a minimum price 
+        // TODO FIX
         if spot > dec!("0.5") {
           let (tlp, remainder) = 
           tri.call_raw::<(Bucket, Option<Bucket>)>("add_liquidity", scrypto_args!(real, input));
@@ -175,6 +176,13 @@ mod alpha {
       self.power_alpha.as_fungible().create_proof_of_amount(dec!(1))
     }
 
+    pub fn prove_azero(&mut self) -> FungibleProof {
+      let rm = ResourceManager::from(self.power_azero);
+      let a0 = Self::authorize(&mut self.power_alpha, || rm.mint(dec!(1)));
+      let ret = a0.as_fungible().create_proof_of_amount(dec!(1));
+      a0.burn();
+      return ret
+    }
 
     // internal 
 

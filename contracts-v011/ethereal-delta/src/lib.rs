@@ -72,11 +72,17 @@ mod delta {
           init {
             "dapp_definition" =>
               GlobalAddress::from(bang), updatable;
+            "tags" => vec!["ethereal-dao".to_owned(), 
+              "delta".to_owned()], updatable;
           }
         )
       )
       .globalize()
       .address()
+    }
+
+    pub fn to_nothing(&mut self) -> Bucket {
+      self.power_delta.take_all()
     }
 
     pub fn deposit(&mut self, input: Bucket) {

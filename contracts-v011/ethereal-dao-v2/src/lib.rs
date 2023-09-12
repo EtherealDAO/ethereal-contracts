@@ -49,6 +49,7 @@ mod dao {
       vote => PUBLIC;
       finalize_proposal => PUBLIC;
       set_vote_duration => restrict_to: [zero];
+      to_nothing => restrict_to: [zero];
     }
   }
 
@@ -116,6 +117,8 @@ mod dao {
           init {
             "dapp_definition" =>
               GlobalAddress::from(bang), updatable;
+            "tags" => vec!["ethereal-dao".to_owned(), 
+              "dao".to_owned()], updatable;
           }
         )
       )
@@ -135,6 +138,10 @@ mod dao {
       the_zero.burn();
     
       dao_addr
+    }
+
+    pub fn to_nothing(&mut self) -> Bucket {
+      self.power_dao.take_all()
     }
 
     // adds proposal to internal list of vote-able proposals

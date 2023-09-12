@@ -2,7 +2,6 @@ use scrypto::prelude::*;
 
 #[blueprint]
 mod eux {
-  // OWNER is Alpha
   enable_method_auth! {
     roles {
       alpha => updatable_by: [];
@@ -21,6 +20,7 @@ mod eux {
       swap => PUBLIC;
       zap => PUBLIC;
       vault_reserves => PUBLIC;
+      look_within => PUBLIC;
     }
   }
 
@@ -58,6 +58,8 @@ mod eux {
                 "icon_url" =>
                   Url::of("https://cdn.discordapp.com/attachments/1092987092864335884/1095874817758081145/logos1.jpeg"),
                   updatable;
+                "tags" => vec!["ethereal-dao".to_owned(), "lp".to_owned()], updatable;
+                "info_url" => Url::of("https://ethereal.systems"), updatable;
             }
         ))
         .burn_roles(burn_roles!(
@@ -99,6 +101,8 @@ mod eux {
           init {
             "dapp_definition" =>
               GlobalAddress::from(bang), updatable;
+            "tags" => vec!["ethereal-dao".to_owned(), 
+              "eux".to_owned()], updatable;
           }
         )
       )
@@ -108,10 +112,27 @@ mod eux {
       return (a1, lp_ra)
     }
 
-    // AuthRule: power_zero
-    // rips the soul out
-    pub fn to_nothing(&mut self) {
+    // rips the soul and the LP out
+    pub fn to_nothing(&mut self) -> (Bucket, Bucket, Bucket) {
+      (
+        self.power_eux.take_all(),
+        self.pool.0.take_all(),
+        self.pool.1.take_all()
+      )
+    }
 
+    pub fn look_within(&self) -> 
+      (
+        (ResourceAddress, Decimal),
+        Decimal,
+        bool
+      )
+    {
+      (
+        self.pool_lp, 
+        self.swap_fee,
+        self.stopped
+      )
     }
 
     // separated from instantiation for dao reasons
@@ -197,8 +218,8 @@ mod eux {
     }
 
     pub fn remove_liquidity(&mut self, input: Bucket) -> (Bucket, Bucket) {
-      // even if stopped or soulless, 
-      // can remove liquidity (in equal balance as at time of stop/soulrip)
+      assert!( !self.stopped && !self.power_eux.is_empty(),
+        "DEX stopped or empty"); 
 
       assert!( input.resource_address() == self.pool_lp.0,
         "wrong lp resource");

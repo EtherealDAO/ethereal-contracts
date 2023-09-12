@@ -319,7 +319,7 @@ mod dao {
             "Usd",
             "from_nothing",
             scrypto_args!(
-              alpha_addr, alpha_resource,
+              alpha_addr, alpha_resource, power_azero,
               power_eux.resource_address().clone(), power_usd,
               exrd, exrd_validator, u_lower, u_upper, u_flash_fee, bang, u_mock_oracle
             )

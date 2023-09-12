@@ -24,6 +24,7 @@ mod usd {
   enable_method_auth! {
     roles {
       alpha => updatable_by: [];
+      azero => updatable_by: [];
       dex => updatable_by: [alpha]; // temporary measure, TODO: alpha + delpoy braider
     },
     methods {
@@ -48,12 +49,13 @@ mod usd {
       ecdp_mint => PUBLIC;
       ecdp_collateralize => PUBLIC;
       ecdp_uncollateralize => PUBLIC;
-      inject_assets => PUBLIC;
       set_oracle => PUBLIC;
       get_oracle => PUBLIC;
       guarded_get_oracle => PUBLIC;
       guarded_get_rescaled_oracle => PUBLIC;
-      mock_mint => PUBLIC;
+      look_within => PUBLIC;
+      get_params => PUBLIC;
+      set_params => restrict_to: [alpha];
     }
   }
 
@@ -99,9 +101,10 @@ mod usd {
   }
 
   impl Usd {
-    pub fn from_nothing(alpha_addr: ComponentAddress, power_alpha: ResourceAddress,
+    pub fn from_nothing(
+      alpha_addr: ComponentAddress, power_alpha: ResourceAddress, power_azero: ResourceAddress,
       power_eux: ResourceAddress, power_usd: Bucket, exrd_resource: ResourceAddress, 
-      exrd_validator: ComponentAddress,
+      exrd_validator: ComponentAddress, 
       lower_bound: Decimal, upper_bound: Decimal, flash_fee: Decimal, bang: ComponentAddress,
       mock_oracle: Decimal
       ) -> (ComponentAddress, ResourceAddress) {
@@ -144,6 +147,8 @@ mod usd {
               , updatable;
             "dapp_definitions" =>
               vec!(GlobalAddress::from(bang)), updatable;
+            "tags" => vec!["ethereal-dao".to_owned(), "stablecoin".to_owned()], updatable;
+            "info_url" => Url::of("https://ethereal.systems"), updatable;
           }
         ))
         .mint_roles(mint_roles!(
@@ -174,6 +179,8 @@ mod usd {
               , updatable;
             "dapp_definitions" =>
               vec!(GlobalAddress::from(bang)), updatable;
+            "tags" => vec!["ethereal-dao".to_owned(), "ecdp".to_owned(), "loan-positions".to_owned()], updatable;
+            "info_url" => Url::of("https://ethereal.systems"), updatable;
           }
         ))
         .mint_roles(mint_roles!(
@@ -231,6 +238,7 @@ mod usd {
       .roles(
         roles!(
           alpha => rule!(require(power_alpha));
+          azero => rule!(require(power_azero));
           dex => rule!(require(power_eux));
         )
       )
@@ -245,6 +253,8 @@ mod usd {
           init {
             "dapp_definition" =>
               GlobalAddress::from(bang), updatable;
+            "tags" => vec!["ethereal-dao".to_owned(), 
+              "usd".to_owned(), "stablecoin".to_owned()], updatable;
           }
         )
       )
@@ -254,12 +264,50 @@ mod usd {
       return (a1, eusd_resource)
     }
 
-    pub fn to_nothing(&mut self) {
-
+    pub fn to_nothing(&mut self) -> (Bucket, Bucket, Bucket) {
+      (
+        self.power_usd.take_all(),
+        self.exrd_vault.take_all(),
+        self.xrd_vault.take_all()
+      )
+    }
+    
+    pub fn look_within(&self) 
+      -> (Decimal, Decimal, Decimal, Decimal) {
+      (
+        self.assets_lp_total,
+        self.liabilities_lp_total,
+        self.liabilities_total,
+        self.mock_oracle
+      )
     }
 
     pub fn start_stop(&mut self, input: bool) {
       self.stopped = input;
+    }
+
+    // easy access
+    pub fn get_params(&self) -> (Decimal, Decimal, Decimal, Decimal, Decimal, Decimal) {
+      (
+        self.ep,
+        self.mcr,
+        self.bp,
+        self.lower_bound,
+        self.upper_bound,
+        self.flash_fee
+      )
+    }
+
+    // easy change
+    pub fn set_params(&mut self, 
+      ep: Decimal, mcr: Decimal, bp: Decimal, lb: Decimal, ub: Decimal, ff: Decimal) {
+      
+      self.ep = ep;
+      self.mcr = mcr;
+      self.bp = bp;
+      self.lower_bound = lb;
+      self.upper_bound = ub;
+      self.flash_fee = ff;
     }
 
     pub fn tcr(&mut self) -> Decimal {
@@ -831,15 +879,7 @@ mod usd {
 
     // mock functions
 
-    pub fn inject_assets(&mut self, ass: Bucket) {
-      self.exrd_vault.put(ass);
-    }
-
-    pub fn mock_mint(&mut self, size: Decimal) -> Bucket {
-      Self::authorize(&mut self.power_usd, || 
-        ResourceManager::from(self.eusd_resource).mint(size))
-    }
-
+    // TODO add 2 phase oracle as discussed with R
     pub fn set_oracle(&mut self, exch: Decimal) {
       self.mock_oracle = exch;
     }
