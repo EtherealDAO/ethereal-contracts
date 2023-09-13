@@ -145,7 +145,7 @@ mod dao {
     }
 
     // adds proposal to internal list of vote-able proposals
-    pub fn add_proposal(&mut self, proposal: Proposal, user: Proof) {
+    pub fn add_proposal(&mut self, proposal: Proposal, user: Proof) -> u64 {
       // can't use 'check' cause it panics lmao
       let soul: ResourceAddress = user.resource_address();
 
@@ -182,6 +182,7 @@ mod dao {
       );
 
       self.proposal_index += 1;
+      return self.proposal_index - 1;
     }
 
     pub fn vote(&mut self, vote: Vote, proposal: u64, user: Proof) {

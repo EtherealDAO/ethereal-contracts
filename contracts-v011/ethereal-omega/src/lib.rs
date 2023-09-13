@@ -39,6 +39,15 @@ pub enum Action {
 
   // Protocol (Parameter) Actions
   EUSDChangeParam(u64, Decimal), // 0-based, change a single number
+
+  // For starting it up, would be not very useful for stopping
+  // unless as last action in the gov update pipeline
+  StartStopAll(bool),
+
+  // For propocol upgrades, and things not included in the "safe" gov building blocks
+  // Schema: calls that package with a single argument of either power_azero or power_zero
+  ManualWithPZeroAuth(PackageAddress, String, String),
+  ManualWithPAZeroAuth(PackageAddress, String, String)
 }
 
 type Proposal = Vec<Action>;
@@ -446,6 +455,12 @@ mod omega {
         // Protocol Param actions
         Action::EUSDChangeParam(i,_) => assert!( *i < 6u64, "out of bounds" ),
 
+        // StartStop
+        Action::StartStopAll(_) => (),
+
+        // For propocol upgrades, and things not included in the "safe" gov building blocks
+        Action::ManualWithPZeroAuth(_, s1, s2) => { check_string(&*s1); check_string(&*s2) },
+        Action::ManualWithPAZeroAuth(_, s1, s2) => { check_string(&*s1); check_string(&*s2) },
 
         // // Alpha actions 
         // Action::AlphaChangeParams(_, _, _) => (),
@@ -479,7 +494,7 @@ mod omega {
         },
         Action::EDaoVote(vote, proposal) => {
           let dao: Global<AnyComponent> = self.dao_addr.into();
-          dao.call_raw::<()>("add_proposal", scrypto_args!(vote, proposal, self.prove_omega()))
+          dao.call_raw::<()>("vote", scrypto_args!(vote, proposal, self.prove_omega()))
         }, 
 
         // Protocol Param actions
@@ -506,8 +521,72 @@ mod omega {
             5 => params.5 = *new,
             _ => panic!()
           }
-          usd.call_raw::<()>("set_params", scrypto_args!(params));
-        }
+
+          Self::authorize(&mut self.power_omega, || {
+            let p = alpha.call_raw::<FungibleProof>("prove_azero", scrypto_args!());
+            p.authorize( ||
+              usd.call_raw::<()>("set_params", scrypto_args!(params))
+            );
+          });
+        },
+
+        // StartStop
+        Action::StartStopAll(startstop) => {
+          let dao: Global<AnyComponent> = self.dao_addr.into();
+          let (a, _, _) = dao.call_raw::<(ComponentAddress, ComponentAddress, ComponentAddress)>
+            ("get_branch_addrs", scrypto_args!());
+          
+          let alpha: Global<AnyComponent> = a.into();
+          let (u, e, t) = alpha.call_raw::<(ComponentAddress, ComponentAddress, ComponentAddress)>
+            ("get_app_addrs", scrypto_args!());
+
+          Self::authorize(&mut self.power_omega, || {
+            let usd: Global<AnyComponent> = u.into();
+            let eux: Global<AnyComponent> = e.into();
+            let tri: Global<AnyComponent> = t.into();
+
+            let p = alpha.call_raw::<FungibleProof>("prove_azero", scrypto_args!());
+            p.authorize( || {
+              usd.call_raw::<()>("start_stop", scrypto_args!(startstop));
+              eux.call_raw::<()>("start_stop", scrypto_args!(startstop));
+              tri.call_raw::<()>("start_stop", scrypto_args!(startstop));
+            });
+          });
+        },
+
+        // For propocol upgrades, and things not included in the "safe" gov building blocks
+        // note: via power zero, it can effectively alsso rip dao badge out i.e. total update
+        Action::ManualWithPZeroAuth(pa, s1, s2) => { 
+          let dao: Global<AnyComponent> = self.dao_addr.into();
+          let (a, _, _) = dao.call_raw::<(ComponentAddress, ComponentAddress, ComponentAddress)>
+            ("get_branch_addrs", scrypto_args!());
+          
+          let alpha: Global<AnyComponent> = a.into();
+
+          let edao_proposal = EDaoProposal::UpdateBranch(*pa, s1.clone(), s2.clone());
+          let ix = dao.call_raw::<()>("add_proposal", scrypto_args!(edao_proposal, self.prove_omega()));
+          let p = Self::authorize(&mut self.power_omega, || 
+            alpha.call_raw::<FungibleProof>("prove_alpha", scrypto_args!()));
+          dao.call_raw::<()>("vote", scrypto_args!(EDaoVote::For, ix, p));
+          // 2/3 is reached so it executes the proposal function, moves power zero to it
+          // will (likely) be a 2 step process, and if it's an upgrade, 
+          // likely best to also stop system after this call
+        },
+
+        Action::ManualWithPAZeroAuth(pm, s1, s2) => { 
+          let dao: Global<AnyComponent> = self.dao_addr.into();
+          let (a, _, _) = dao.call_raw::<(ComponentAddress, ComponentAddress, ComponentAddress)>
+            ("get_branch_addrs", scrypto_args!());
+          
+          let alpha: Global<AnyComponent> = a.into();
+          let a0 = alpha.call_raw::<FungibleProof>("make_azero", scrypto_args!());
+          ScryptoVmV1Api::blueprint_call(
+            *pm,
+            s1,
+            s2,
+            scrypto_args!(a0)
+          );
+        },
 
       //   // Alpha actions 
       //   Action::AlphaChangeParams(vote_duration, vote_quorum, proposal_payment) => {

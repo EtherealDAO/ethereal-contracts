@@ -4,13 +4,12 @@ use scrypto::prelude::*;
 mod eux {
   enable_method_auth! {
     roles {
-      alpha => updatable_by: [];
       azero => updatable_by: [];
     },
     methods {
       to_nothing => restrict_to: [azero];
-      first_deposit => restrict_to: [alpha];
-      start_stop => restrict_to: [alpha];
+      first_deposit => restrict_to: [azero];
+      start_stop => restrict_to: [azero];
       add_liquidity => PUBLIC;
       in_given_out => PUBLIC;
       in_given_price => PUBLIC;
@@ -37,7 +36,7 @@ mod eux {
     // 50/50 dao-managed 
     // EUXLP is to be considered a 
     pub fn from_nothing(alpha_addr: ComponentAddress, 
-      power_alpha: ResourceAddress, power_azero: ResourceAddress, power_eux: Bucket, 
+      power_azero: ResourceAddress, power_eux: Bucket, 
       t1: ResourceAddress, t2: ResourceAddress,
       swap_fee: Decimal, bang: ComponentAddress )-> (ComponentAddress, ResourceAddress) {
 
@@ -87,13 +86,12 @@ mod eux {
       .roles(
         roles!(
           azero => rule!(require(power_azero));
-          alpha => rule!(require(power_alpha));
         )
       )
       .metadata(
         metadata!(
           roles {
-            metadata_setter => rule!(require(power_alpha));
+            metadata_setter => rule!(require(power_azero));
             metadata_setter_updater => rule!(deny_all);
             metadata_locker => rule!(deny_all);
             metadata_locker_updater => rule!(deny_all);
@@ -138,9 +136,6 @@ mod eux {
     // separated from instantiation for dao reasons
     // separateed from add_liquidity for efficiency reasons
     pub fn first_deposit(&mut self, b1: Bucket, b2: Bucket) -> (Bucket, Option<Bucket>) {
-      assert!( !self.stopped && !self.power_eux.is_empty(),
-        "DEX stopped or empty"); 
-
       assert!( self.pool.0.amount() == dec!(0),
         "first deposit into an already running pool");
 

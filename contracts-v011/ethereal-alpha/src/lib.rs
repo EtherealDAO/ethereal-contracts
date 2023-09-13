@@ -16,6 +16,7 @@ mod alpha {
       get_app_addrs => PUBLIC;
       prove_alpha => restrict_to: [omega];
       prove_azero => restrict_to: [omega];
+      make_azero => restrict_to: [omega];
       set_dao_addr => restrict_to: [zero];
     }
   }
@@ -182,6 +183,11 @@ mod alpha {
       let ret = a0.as_fungible().create_proof_of_amount(dec!(1));
       a0.burn();
       return ret
+    }
+
+    pub fn make_azero(&mut self) -> Bucket {
+      let rm = ResourceManager::from(self.power_azero);
+      Self::authorize(&mut self.power_alpha, || rm.mint(dec!(1)))
     }
 
     // internal 

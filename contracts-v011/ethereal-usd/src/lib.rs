@@ -23,13 +23,12 @@ pub struct Ecdp {
 mod usd {
   enable_method_auth! {
     roles {
-      alpha => updatable_by: [];
       azero => updatable_by: [];
-      dex => updatable_by: [alpha]; // temporary measure, TODO: alpha + delpoy braider
+      dex => updatable_by: [azero]; // temporary measure, TODO: alpha + delpoy braider
     },
     methods {
-      to_nothing => restrict_to: [alpha]; //todo alpha's power zero
-      start_stop => restrict_to: [alpha];
+      to_nothing => restrict_to: [azero]; //todo alpha's power zero
+      start_stop => restrict_to: [azero];
       aa_poke => PUBLIC;
       aa_woke => restrict_to: [dex];
       aa_choke => PUBLIC;
@@ -55,7 +54,8 @@ mod usd {
       guarded_get_rescaled_oracle => PUBLIC;
       look_within => PUBLIC;
       get_params => PUBLIC;
-      set_params => restrict_to: [alpha];
+      set_params => restrict_to: [azero];
+      first_ecdp => restrict_to: [azero];
     }
   }
 
@@ -102,7 +102,7 @@ mod usd {
 
   impl Usd {
     pub fn from_nothing(
-      alpha_addr: ComponentAddress, power_alpha: ResourceAddress, power_azero: ResourceAddress,
+      alpha_addr: ComponentAddress, power_azero: ResourceAddress,
       power_eux: ResourceAddress, power_usd: Bucket, exrd_resource: ResourceAddress, 
       exrd_validator: ComponentAddress, 
       lower_bound: Decimal, upper_bound: Decimal, flash_fee: Decimal, bang: ComponentAddress,
@@ -237,7 +237,6 @@ mod usd {
       .prepare_to_globalize(OwnerRole::None)
       .roles(
         roles!(
-          alpha => rule!(require(power_alpha));
           azero => rule!(require(power_azero));
           dex => rule!(require(power_eux));
         )
@@ -245,7 +244,7 @@ mod usd {
       .metadata(
         metadata!(
           roles {
-            metadata_setter => rule!(require(power_alpha));
+            metadata_setter => rule!(require(power_azero));
             metadata_setter_updater => rule!(deny_all);
             metadata_locker => rule!(deny_all);
             metadata_locker_updater => rule!(deny_all);
@@ -377,6 +376,44 @@ mod usd {
       return self.liabilities_total / self.liabilities_lp_total;
     }
 
+    // can technically create it underwater but that doesn't matter
+    // intended use is for treasury to create it at like 5x overcollat and not manage it at all
+    // ASSUMES EXRD INPUT, MINTS 777 EUSD, NO CR CHECKS
+    pub fn first_ecdp(&mut self, input: Bucket) -> (Bucket, Bucket) {
+      assert!( self.liabilities_lp_total == dec!(0) && self.assets_lp_total == dec!(0),
+        "not the first ecdp" );
+
+      let ecdp = Self::authorize(&mut self.power_usd, || 
+        ResourceManager::from(self.ecdp_resource)
+          .mint_ruid_non_fungible(
+            Ecdp { assets_lp: dec!(0), liabilities_lp: dec!(0) }
+          )
+      );
+
+      let nft: NonFungible<Ecdp> = ecdp.as_non_fungible().non_fungible();
+      let id = nft.local_id();
+
+      let assets_lp = self.xrdexrd()*input.amount();
+      let liabilities_lp = dec!("777");
+
+      self.assets_lp_total += assets_lp;
+      self.liabilities_lp_total += liabilities_lp;
+      self.liabilities_total = liabilities_lp;
+
+      let eusd = Self::authorize(&mut self.power_usd, || {
+        let rm = ResourceManager::from(self.ecdp_resource);
+        rm.update_non_fungible_data(&id, "assets_lp", 
+          assets_lp
+        );
+        rm.update_non_fungible_data(&id, "liabilities_lp", 
+          liabilities_lp
+        );
+        ResourceManager::from(self.eusd_resource).mint(dec!("777"))
+      });
+
+      (ecdp, eusd)
+    }
+
     // creates an empty ecdp
     pub fn open_ecdp(&mut self) -> Bucket {
       Self::authorize(&mut self.power_usd, || 
@@ -387,9 +424,10 @@ mod usd {
       )
     }
 
-    // TODO if stopped
     // if can't mint, panics
     pub fn ecdp_mint(&mut self, lia_lp: Decimal, p: Proof) -> Bucket {
+      assert!( !self.stopped && !self.power_usd.is_empty(),
+        "USD stopped or empty"); 
       assert!(lia_lp > dec!(0), 
         "negative mint number");
 
@@ -425,6 +463,8 @@ mod usd {
 
     // if burns too much, panics
     pub fn ecdp_burn(&mut self, input: Bucket, p: Proof) {
+      assert!( !self.stopped && !self.power_usd.is_empty(),
+        "USD stopped or empty"); 
       assert!(!input.is_empty(), 
         "empty input");
 
@@ -459,6 +499,8 @@ mod usd {
 
     // absolutely no panics, ever
     pub fn ecdp_collateralize(&mut self, input: Bucket, p: Proof) {
+      assert!( !self.stopped && !self.power_usd.is_empty(),
+        "USD stopped or empty"); 
       assert!(!input.is_empty(), 
         "empty input");
 
@@ -474,11 +516,13 @@ mod usd {
 
       let added_assets_lp = 
         if input.resource_address() == self.exrd_vault.resource_address()
-        { self.exrd_vault.put(input);
-          self.xrdexrd()*size / self.asset_lp_xrd()
+        { let new = self.xrdexrd()*size / self.asset_lp_xrd();
+          self.exrd_vault.put(input);
+          new
         } else {
+          let new = size / self.asset_lp_xrd();
           self.xrd_vault.put(input);
-          size / self.asset_lp_xrd()
+          new
         };
       
       self.assets_lp_total += added_assets_lp;
@@ -492,6 +536,8 @@ mod usd {
     // returns EXRD first, and if that runs out, XRD second
     pub fn ecdp_uncollateralize(&mut self, ass_lp: Decimal, p: Proof) 
       -> (Bucket, Option<Bucket>) {
+      assert!( !self.stopped && !self.power_usd.is_empty(),
+        "USD stopped or empty"); 
       assert!(ass_lp != dec!(0), 
         "empty input");
 
@@ -549,7 +595,8 @@ mod usd {
     pub fn liquidate(&mut self, 
       liquidated_id: NonFungibleLocalId, 
       liquidator_id: NonFungibleLocalId) {
-
+      assert!( !self.stopped && !self.power_usd.is_empty(),
+        "USD stopped or empty"); 
       assert!( !self.fl_active && !self.fm_active,
         "can't liquidate during flash transactions");
       
@@ -610,6 +657,8 @@ mod usd {
     // if res -- exrd, otherwise xrd
     // repayment in either
     pub fn flash_loan_start(&mut self, size: Decimal, res: bool) -> (Bucket, Bucket) {
+      assert!( !self.stopped && !self.power_usd.is_empty(),
+        "USD stopped or empty"); 
       assert!(size <= if res { self.exrd_vault.amount() } else { self.xrd_vault.amount() },
         "our size is not size enough"
       );
@@ -688,6 +737,8 @@ mod usd {
     // TODO: impose limit on the size?
     // what could go wrong? lmao
     pub fn flash_mint_start(&mut self, size: Decimal) -> (Bucket, Bucket) {
+      assert!( !self.stopped && !self.power_usd.is_empty(),
+        "USD stopped or empty"); 
       // the liablitity # doesn't change until repayment
       assert!(!self.fm_active, 
         "twice flash minted");

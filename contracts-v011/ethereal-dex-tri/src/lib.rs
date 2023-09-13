@@ -5,13 +5,12 @@ use scrypto_math::*;
 mod tri {
   enable_method_auth! {
     roles {
-      alpha => updatable_by: [];
       azero => updatable_by: [];
     },
     methods {
       to_nothing => restrict_to: [azero];
-      first_deposit => restrict_to: [alpha];
-      start_stop => restrict_to: [alpha];
+      first_deposit => restrict_to: [azero];
+      start_stop => restrict_to: [azero];
       add_liquidity => PUBLIC;
       in_given_out => PUBLIC;
       in_given_price => PUBLIC;
@@ -39,7 +38,7 @@ mod tri {
     // instantiates the TriPool, 
     // starting it as 'stopped'
     pub fn from_nothing(alpha_addr: ComponentAddress, 
-      power_alpha: ResourceAddress, power_azero: ResourceAddress,
+      power_azero: ResourceAddress,
       power_tri: Bucket, 
       t1: ResourceAddress, t1w: Decimal, t2: ResourceAddress, t2w: Decimal,
       swap_fee: Decimal, bang: ComponentAddress )-> (ComponentAddress, ResourceAddress) {
@@ -112,14 +111,13 @@ mod tri {
       .prepare_to_globalize(OwnerRole::None)
       .roles(
         roles!(
-          alpha => rule!(require(power_alpha));
           azero => rule!(require(power_azero));
         )
       )
       .metadata(
         metadata!(
           roles {
-            metadata_setter => rule!(require(power_alpha));
+            metadata_setter => rule!(require(power_azero));
             metadata_setter_updater => rule!(deny_all);
             metadata_locker => rule!(deny_all);
             metadata_locker_updater => rule!(deny_all);
@@ -165,9 +163,6 @@ mod tri {
     // separated from instantiation for dao reasons
     // separateed from add_liquidity for efficiency reasons
     pub fn first_deposit(&mut self, b1: Bucket, b2: Bucket) -> (Bucket, Option<Bucket>) {
-      assert!( !self.stopped && !self.power_tri.is_empty(),
-        "DEX stopped or empty"); 
-
       assert!( *self.vault_reserves().iter().next().expect("incoherence").1 == dec!(0),
         "first deposit into an already running pool");
 
