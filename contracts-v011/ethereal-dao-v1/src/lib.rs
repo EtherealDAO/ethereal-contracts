@@ -348,7 +348,7 @@ mod dao {
             "from_nothing",
             scrypto_args!(
               dao_addr, power_zero,
-              omega_resource, power_alpha.take(dec!(1)), power_azero,
+              omega_resource, power_alpha, power_azero,
               bang, bang, bang, bang
             )
         );

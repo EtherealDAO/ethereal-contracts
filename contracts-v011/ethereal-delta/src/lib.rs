@@ -118,10 +118,6 @@ mod delta {
       }
     }
 
-    pub fn to_nothing(&mut self, ) {
-
-    }
-
     // pupeteer delta by alpha
     pub fn prove_delta(&self) -> FungibleProof {
       self.power_delta.as_fungible().create_proof_of_amount(dec!(1))
