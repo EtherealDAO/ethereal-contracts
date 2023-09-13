@@ -1,4 +1,5 @@
 use scrypto::prelude::*;
+use scrypto::blueprints::consensus_manager::TimePrecision;
 
 // let component: Global<AnyComponent> = Global(ObjectStub::new(ObjectStubHandle::Global(GlobalAddress::from(component_address))));
 // let return_value = component.call_raw::<ZygomebFancyReturnType>("method_name", scrypto_args!(param1));
@@ -94,8 +95,11 @@ mod usd {
     fm_active: bool,
     flash_fee: Decimal,
 
-    // fixed exch rate
-    mock_oracle: Decimal,
+    // exch rate
+    oracle: Decimal,
+    oracle_timestamp: Instant,
+    oracle1: ResourceAddress,
+    oracle2: ResourceAddress,
 
     stopped: bool // TODO make work
   }
@@ -106,7 +110,7 @@ mod usd {
       power_eux: ResourceAddress, power_usd: Bucket, exrd_resource: ResourceAddress, 
       exrd_validator: ComponentAddress, 
       lower_bound: Decimal, upper_bound: Decimal, flash_fee: Decimal, bang: ComponentAddress,
-      mock_oracle: Decimal
+      oracle_init: Decimal, oracle1: ResourceAddress, oracle2: ResourceAddress
       ) -> (ComponentAddress, ResourceAddress) {
 
       let flash_resource = ResourceBuilder::new_ruid_non_fungible::<Flash>(OwnerRole::None)
@@ -229,7 +233,10 @@ mod usd {
         fm_active: false,
         flash_fee,
 
-        mock_oracle,
+        oracle: oracle_init,
+        oracle_timestamp: Clock::current_time_rounded_to_minutes(),
+        oracle1,
+        oracle2,
 
         stopped: false // TODO: need vote to start
       }
@@ -277,7 +284,7 @@ mod usd {
         self.assets_lp_total,
         self.liabilities_lp_total,
         self.liabilities_total,
-        self.mock_oracle
+        self.oracle
       )
     }
 
@@ -928,16 +935,29 @@ mod usd {
       return ret
     }
 
-    // mock functions
+    pub fn set_oracle(&mut self, exch: Decimal, p: Proof) {
+      if p.resource_address() == self.oracle1 {
+        self.oracle = exch;
+        return
+      }
 
-    // TODO add 2 phase oracle as discussed with R
-    pub fn set_oracle(&mut self, exch: Decimal) {
-      self.mock_oracle = exch;
+      // if after 30m since last update, backup can post
+      let second_allowed = Clock::current_time_is_strictly_after( 
+        self.oracle_timestamp.add_minutes(30i64).unwrap(), 
+        TimePrecision::Minute );
+
+      if second_allowed && p.resource_address() == self.oracle2 {
+        self.oracle = exch;
+        return
+      }
+
+      panic!("wrong call")
     }
 
     // USD/XRD and last time it was updated
-    pub fn get_oracle(&self) -> (Decimal,Instant) {
-      (self.mock_oracle, Clock::current_time_rounded_to_minutes())
+    pub fn get_oracle(&self) -> (Decimal, Instant) {
+      // TODO once real oracle is running, use the self timestamp
+      (self.oracle, Clock::current_time_rounded_to_minutes())
     }
   }
 }

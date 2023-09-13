@@ -53,14 +53,12 @@ mod dao {
       alpha_p: PackageAddress, delta_p: PackageAddress, omega_p: PackageAddress,
       usd_p: PackageAddress, eux_p: PackageAddress, tri_p: PackageAddress, daov2_p: PackageAddress,
       real: Bucket, exrd: ResourceAddress, exrd_validator: ComponentAddress, bang: ComponentAddress
-      ) -> (ComponentAddress, Bucket) {
-      // todo for now just a mock script helping the setup/reproducible redeploy
-      // + addr beacon
+      ) -> (ComponentAddress, Bucket, Bucket, Bucket) {
 
       let u_lower = dec!("0.99");
       let u_upper = dec!("1.01");
       let u_flash_fee = dec!("1.001");
-      let u_mock_oracle = dec!("1");
+      let u_init_oracle = dec!("1");
 
       let e_swap_fee = dec!("0.997");
       
@@ -124,7 +122,7 @@ mod dao {
             }
           )
         )
-        .mint_initial_supply(2); // todo temp hack
+        .mint_initial_supply(1);
       let power_delta = ResourceBuilder::new_fungible(OwnerRole::None)
         .metadata(
           metadata!(
@@ -177,6 +175,43 @@ mod dao {
           )
         )
         .mint_initial_supply(1);
+
+      let oracle1 = ResourceBuilder::new_fungible(OwnerRole::None)
+        .metadata(
+          metadata!(
+            roles {
+              metadata_setter => rule!(require(power_zero));
+              metadata_setter_updater => rule!(deny_all);
+              metadata_locker => rule!(deny_all);
+              metadata_locker_updater => rule!(deny_all);
+            },
+            init {
+              "dapp_definition" =>
+                GlobalAddress::from(bang), updatable;
+              "name" => "EDAO PRIMARY ORACLE", locked;
+            }
+          )
+        )
+        .mint_initial_supply(1);
+
+      let oracle2 = ResourceBuilder::new_fungible(OwnerRole::None)
+        .metadata(
+          metadata!(
+            roles {
+              metadata_setter => rule!(require(power_zero));
+              metadata_setter_updater => rule!(deny_all);
+              metadata_locker => rule!(deny_all);
+              metadata_locker_updater => rule!(deny_all);
+            },
+            init {
+              "dapp_definition" =>
+                GlobalAddress::from(bang), updatable;
+              "name" => "EDAO BACKUP ORACLE", locked;
+            }
+          )
+        )
+        .mint_initial_supply(1);
+
       let power_eux = ResourceBuilder::new_fungible(OwnerRole::None)
         .metadata(
           metadata!(
@@ -240,6 +275,11 @@ mod dao {
       
       let the_zero = power_dao.as_fungible().authorize_with_all(|| 
         ResourceManager::from(power_zero).mint(1)
+      );
+
+      // TODO REMOVE
+      let testing_azero = power_alpha.as_fungible().authorize_with_all(|| 
+        ResourceManager::from(power_azero).mint(1)
       );
 
       let real_resource = real.resource_address();
@@ -321,7 +361,8 @@ mod dao {
             scrypto_args!(
               alpha_addr, power_azero,
               power_eux.resource_address().clone(), power_usd,
-              exrd, exrd_validator, u_lower, u_upper, u_flash_fee, bang, u_mock_oracle
+              exrd, exrd_validator, u_lower, u_upper, u_flash_fee, bang, 
+              u_init_oracle, oracle1.resource_address(), oracle2.resource_address()
             )
         );
       let (usd_addr, eusd_resource): (ComponentAddress, ResourceAddress) = 
@@ -361,9 +402,9 @@ mod dao {
       });
 
       the_zero.burn();
-    
-      // todo remove alpha
-      (dao_addr, power_alpha.into())
+      
+      // todo remove azero
+      (dao_addr, testing_azero.into(), oracle1.into(), oracle2.into())
     }
 
     // deploy second part
