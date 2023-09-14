@@ -33,7 +33,7 @@ mod usd {
       aa_poke => PUBLIC;
       aa_woke => restrict_to: [dex];
       aa_choke => PUBLIC;
-      xrdexrd => PUBLIC;
+      exrdxrd => PUBLIC;
       flash_loan_start => PUBLIC;
       flash_loan_end => PUBLIC;
       flash_mint_start => PUBLIC;
@@ -317,9 +317,9 @@ mod usd {
     }
 
     pub fn tcr(&mut self) -> Decimal {
-      if let Some(usdxrd) = self.guarded_get_oracle() {
-        let usd_xrd = self.xrd_vault.amount() * (dec!(1) / usdxrd); 
-        let usd_exrd = self.exrd_vault.amount() * (dec!(1) / (usdxrd * self.xrdexrd()));
+      if let Some(xrdusd) = self.guarded_get_oracle() {
+        let usd_xrd = self.xrd_vault.amount() * xrdusd; 
+        let usd_exrd = self.exrd_vault.amount() * xrdusd * self.exrdxrd();
         return (usd_xrd + usd_exrd) / self.liabilities_total;
       } 
       panic!("OUTDATED ORACLE");
@@ -328,9 +328,9 @@ mod usd {
     // returns tcr + assets in usd + liabilities in usd
     // purely a compt opt
     pub fn tcr_au_lu(&mut self) -> (Decimal, Decimal, Decimal) {
-      if let Some(usdxrd) = self.guarded_get_oracle() {
-        let usd_xrd = self.xrd_vault.amount() * (dec!(1) / usdxrd); 
-        let usd_exrd = self.exrd_vault.amount() * (dec!(1) / (usdxrd * self.xrdexrd()));
+      if let Some(xrdusd) = self.guarded_get_oracle() {
+        let usd_xrd = self.xrd_vault.amount() * xrdusd; 
+        let usd_exrd = self.exrd_vault.amount() * xrdusd * self.exrdxrd();
 
         let au = usd_xrd + usd_exrd;
         return (au / self.liabilities_total, au, self.liabilities_total)
@@ -338,11 +338,11 @@ mod usd {
       panic!("OUTDATED ORACLE");
     }
 
-    // how much XRD is each EXRD worth, i.e. xrd/exrd 
+    // how much XRD is each EXRD worth, i.e. exrd/xrd 
     // system assumes no time value on unstake 
     // input as size in EXRD, inp 1 ~> returns >= 1
     // additionally it corrects the asset index by bumping it with stake rewards from exrd
-    pub fn xrdexrd(&self) -> Decimal {
+    pub fn exrdxrd(&self) -> Decimal {
       // fuck type safety
       let valid: Global<AnyComponent> = self.exrd_validator.into();
 
@@ -351,31 +351,32 @@ mod usd {
 
     // conversion of asset_lp units 
     // returns the value of a 1 asset_lp in EUSD
-    // i.e. EUSD/asset_lp
+    // i.e. asset_lp/EUSD
     pub fn asset_lp_usd(&mut self) -> Decimal {
-      if let Some(usdxrd) = self.guarded_get_oracle() {
+      if let Some(xrdusd) = self.guarded_get_oracle() {
         if self.assets_lp_total == dec!(0) {
-          return dec!(1) * (dec!(1) / usdxrd)
+          return xrdusd
         }
-        let usd_xrd = self.xrd_vault.amount() * (dec!(1) / usdxrd); 
-        let usd_exrd = self.exrd_vault.amount() * (dec!(1) / (usdxrd * self.xrdexrd()));
+        let usd_xrd = self.xrd_vault.amount() * xrdusd; 
+        let usd_exrd = self.exrd_vault.amount() * xrdusd * self.exrdxrd();
         return (usd_xrd + usd_exrd) / self.assets_lp_total;
       }
       panic!("OUTDATED ORACLE");
     }
 
-    // XRD/asset_lp
-    // how much xrd is each asset_lp worth
+    // asset_lp/XRD
+    // how much xrd is 1 asset_lp worth
     pub fn asset_lp_xrd(&mut self) -> Decimal {
       if self.assets_lp_total == dec!(0) {
         return dec!(1)
       }
-      return ( self.xrd_vault.amount() +  self.xrdexrd()*self.exrd_vault.amount() ) 
-        / self.assets_lp_total;
+
+      ( self.xrd_vault.amount() + self.exrdxrd()*self.exrd_vault.amount() ) 
+        / self.assets_lp_total
     }
 
     // conversion of liability_lp units 
-    // EUSD / lia_lp
+    // lia_lp / EUSD
     pub fn liability_lp_usd(&self) -> Decimal {
       if self.liabilities_lp_total == dec!(0) {
         return dec!(1)
@@ -400,7 +401,7 @@ mod usd {
       let nft: NonFungible<Ecdp> = ecdp.as_non_fungible().non_fungible();
       let id = nft.local_id();
 
-      let assets_lp = self.xrdexrd()*input.amount();
+      let assets_lp = self.exrdxrd()*input.amount();
       let liabilities_lp = dec!("777");
 
       self.assets_lp_total += assets_lp;
@@ -523,7 +524,7 @@ mod usd {
 
       let added_assets_lp = 
         if input.resource_address() == self.exrd_vault.resource_address()
-        { let new = self.xrdexrd()*size / self.asset_lp_xrd();
+        { let new = self.exrdxrd()*size / self.asset_lp_xrd();
           self.exrd_vault.put(input);
           new
         } else {
@@ -572,15 +573,15 @@ mod usd {
       let mut ret_xrd = None;
       let ret_exrd = {
         let refund_xrd = ass_lp * lp_xrd;
-        let xrdexrd =  self.xrdexrd();
+        let exrdxrd =  self.exrdxrd();
 
-        if xrdexrd*self.exrd_vault.amount() < refund_xrd {
+        if exrdxrd*self.exrd_vault.amount() < refund_xrd {
           // if the eexrd vault alone cannot pay out enough
-          let paidout = xrdexrd*self.exrd_vault.amount();
+          let paidout = exrdxrd*self.exrd_vault.amount();
           ret_xrd = Some(self.xrd_vault.take(refund_xrd - paidout));
           self.exrd_vault.take_all()
         } else {
-          self.exrd_vault.take(refund_xrd / xrdexrd)
+          self.exrd_vault.take(refund_xrd / exrdxrd)
         }
       };
       
@@ -703,7 +704,7 @@ mod usd {
 
       let data: Flash = flash.as_non_fungible().non_fungible().data();
 
-      let xrdexrd = self.xrdexrd();
+      let exrdxrd = self.exrdxrd();
       
       match data.isloan {
         Some(true) => {
@@ -713,7 +714,7 @@ mod usd {
 
             self.exrd_vault.put( input );
           } else {
-            assert!(input.amount() >= xrdexrd*data.size,
+            assert!(input.amount() >= exrdxrd*data.size,
               "insufficient size");
 
             self.xrd_vault.put( input );
@@ -721,7 +722,7 @@ mod usd {
         }
         Some(false) => {
           if input.resource_address() == self.exrd_vault.resource_address() {   
-            assert!(xrdexrd*input.amount() >= data.size,
+            assert!(exrdxrd*input.amount() >= data.size,
               "insufficient size");
 
             self.exrd_vault.put(input);
@@ -805,7 +806,7 @@ mod usd {
         "can't liquidate during flash transactions");
 
       // EUSD/EXRD
-      let usdexrd = self.guarded_get_rescaled_oracle().expect("OUTDATED ORACLE");
+      let usdexrd = dec!(1) / self.guarded_get_rescaled_oracle().expect("OUTDATED ORACLE");
 
       if spot > usdexrd * self.upper_bound {
         Some((usdexrd * self.upper_bound, usdexrd, true))
@@ -841,14 +842,14 @@ mod usd {
           None
         }
       } else {
-        let xrdexrd = self.xrdexrd();
+        let exrdxrd = self.exrdxrd();
         // above emergency, can do MPdown
         if tcr > self.ep {
           Self::authorize(&mut self.power_usd, || {            
             if self.exrd_vault.amount() <= size {
               let valid: Global<AnyComponent> = self.exrd_validator.into();
               let diff = size - self.exrd_vault.amount();
-              let reqxrd = diff * dec!(1) / xrdexrd;
+              let reqxrd = diff * dec!(1) / exrdxrd;
 
               if reqxrd >= self.xrd_vault.amount() {
                 let newexrd = valid.call_raw(
@@ -901,11 +902,11 @@ mod usd {
 
     // internal 
 
-    // returns USD/EXRD
+    // returns EXRD/USD
     pub fn guarded_get_rescaled_oracle(&mut self) -> Option<Decimal> {
-      if let Some(usdxrd) = self.guarded_get_oracle() {
-        // USD/EXRD = USD/XRD * XRD/EXRD 
-        Some(usdxrd * self.xrdexrd())
+      if let Some(xrdusd) = self.guarded_get_oracle() {
+        // EXRD/USD = XRD/USD * EXRD/XRD 
+        Some(xrdusd * self.exrdxrd())
       } else {
         None
       }
@@ -913,7 +914,7 @@ mod usd {
 
     // if feed is outdated, stop the system / withdrawal only mode
     pub fn guarded_get_oracle(&self) -> Option<Decimal> {
-      let (usdxrd, last_update) = self.get_oracle();
+      let (xrdusd, last_update) = self.get_oracle();
 
       // if oracle inactive for 5 minutes, shit the bed
       if last_update.add_minutes(5i64).expect("incoherence").compare(
@@ -922,7 +923,7 @@ mod usd {
        ) {
         None
       } else {
-        Some(usdxrd)
+        Some(xrdusd)
       }
     }
 
@@ -954,7 +955,7 @@ mod usd {
       panic!("wrong call")
     }
 
-    // USD/XRD and last time it was updated
+    // XRD/USD and last time it was updated
     pub fn get_oracle(&self) -> (Decimal, Instant) {
       // TODO once real oracle is running, use the self timestamp
       (self.oracle, Clock::current_time_rounded_to_minutes())
