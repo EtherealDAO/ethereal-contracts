@@ -20,6 +20,54 @@ pub struct Ecdp {
   // TODO liquidation hook
 }
 
+// events
+
+#[derive(ScryptoSbor, ScryptoEvent)]
+struct EcdpAssetsEvent {
+  ecdp: NonFungibleLocalId,
+  diff: Decimal, // negative = outflow
+  new: Decimal
+}
+
+#[derive(ScryptoSbor, ScryptoEvent)]
+struct EcdpLiabilitiesEvent {
+  ecdp: NonFungibleLocalId,
+  diff: Decimal, // negative = outflow
+  new: Decimal
+}
+
+// sizes shown in the above events which are also emited
+#[derive(ScryptoSbor, ScryptoEvent)]
+struct EcdpLiquidatedEvent {
+  ecdp: NonFungibleLocalId
+}
+
+#[derive(ScryptoSbor, ScryptoEvent)]
+struct NewEcdpEvent {
+  ecdp: NonFungibleLocalId
+}
+
+#[derive(ScryptoSbor, ScryptoEvent)]
+struct FlashEvent {
+  size: Decimal,
+  isloan: Option<bool> 
+}
+
+#[derive(ScryptoSbor, ScryptoEvent)]
+struct AAEvent {
+  direction: bool,
+  size: Decimal,
+  profit: Decimal
+}
+
+#[derive(ScryptoSbor, ScryptoEvent)]
+struct OracleEvent {
+  old: Decimal,
+  new: Decimal
+}
+
+// code
+
 #[blueprint]
 mod usd {
   enable_method_auth! {
@@ -87,6 +135,10 @@ mod usd {
     // %-expressed maximum price depeg on open market
     lower_bound: Decimal,
     upper_bound: Decimal,
+
+    // for safety reasons markets have to be sized appropriately
+    // at least for now 
+    maximum_minted: Decimal,
 
     // flashing variables, allow only one active flashing in a tx
     // this includes any MP invocation, which means flash self sale is impossible
@@ -220,13 +272,16 @@ mod usd {
         xrd_vault: Vault::new(XRD),
         exrd_validator,
 
-        // TODO placeholders
-        ep: dec!("1.1"),
-        mcr: dec!("1.3"),
-        bp: dec!("1.4"),
+        // TODO candidate numbers
+        ep: dec!("1.2"),
+        mcr: dec!("1.5"),
+        bp: dec!("1.7"),
 
         lower_bound,
         upper_bound,
+
+        // TODO candidate number
+        maximum_minted: dec!("1000000"),
 
         flash_resource,
         fl_active: false,
@@ -293,26 +348,28 @@ mod usd {
     }
 
     // easy access
-    pub fn get_params(&self) -> (Decimal, Decimal, Decimal, Decimal, Decimal, Decimal) {
+    pub fn get_params(&self) -> (Decimal, Decimal, Decimal, Decimal, Decimal, Decimal, Decimal) {
       (
         self.ep,
         self.mcr,
         self.bp,
         self.lower_bound,
         self.upper_bound,
+        self.maximum_minted,
         self.flash_fee
       )
     }
 
     // easy change
     pub fn set_params(&mut self, 
-      ep: Decimal, mcr: Decimal, bp: Decimal, lb: Decimal, ub: Decimal, ff: Decimal) {
+      ep: Decimal, mcr: Decimal, bp: Decimal, lb: Decimal, ub: Decimal, mm: Decimal, ff: Decimal) {
       
       self.ep = ep;
       self.mcr = mcr;
       self.bp = bp;
       self.lower_bound = lb;
       self.upper_bound = ub;
+      self.maximum_minted = mm;
       self.flash_fee = ff;
     }
 
@@ -408,6 +465,13 @@ mod usd {
       self.liabilities_lp_total += liabilities_lp;
       self.liabilities_total = liabilities_lp;
 
+      Runtime::emit_event(
+        NewEcdpEvent { ecdp: id.clone() });
+      Runtime::emit_event(
+        EcdpAssetsEvent { ecdp: id.clone(), diff: assets_lp, new: assets_lp });
+      Runtime::emit_event(
+        EcdpLiabilitiesEvent { ecdp: id.clone(), diff: liabilities_lp, new: liabilities_lp });
+
       let eusd = Self::authorize(&mut self.power_usd, || {
         let rm = ResourceManager::from(self.ecdp_resource);
         rm.update_non_fungible_data(&id, "assets_lp", 
@@ -423,13 +487,25 @@ mod usd {
     }
 
     // creates an empty ecdp
-    pub fn open_ecdp(&mut self) -> Bucket {
-      Self::authorize(&mut self.power_usd, || 
-        ResourceManager::from(self.ecdp_resource)
+    pub fn open_ecdp(&mut self, fee: Bucket) -> Bucket {
+      assert!( self.liabilities_lp_total != dec!(0) && self.assets_lp_total != dec!(0),
+        "need a first ecdp first" );
+
+      assert!( fee.amount() < dec!("100"), 
+        "fee too small" );
+
+      self.xrd_vault.put(fee);
+      
+      Self::authorize(&mut self.power_usd, || {
+        let out = ResourceManager::from(self.ecdp_resource)
           .mint_ruid_non_fungible(
             Ecdp { assets_lp: dec!(0), liabilities_lp: dec!(0) }
-          )
-      )
+          );
+        Runtime::emit_event(
+          NewEcdpEvent { ecdp: out.as_non_fungible().non_fungible_local_id() });
+
+        out
+      })
     }
 
     // if can't mint, panics
@@ -456,6 +532,11 @@ mod usd {
         / ( new_liabilities_lp * lp_usd );
       assert!( cr >= self.mcr, 
         "cannot mint under mcr");
+      assert!( self.liabilities_total + new_liabilities_lp * lp_usd > self.maximum_minted, 
+        "exceeded maximum minted");
+
+      Runtime::emit_event(
+        EcdpLiabilitiesEvent { ecdp: id.clone(), diff: lia_lp, new: new_liabilities_lp });
 
       let minted = lia_lp * lp_usd;
 
@@ -463,7 +544,7 @@ mod usd {
       self.liabilities_lp_total += lia_lp;
       Self::authorize(&mut self.power_usd, || {
         rm.update_non_fungible_data(&id, "liabilities_lp", 
-          lia_lp
+          new_liabilities_lp
         );
         ResourceManager::from(self.eusd_resource).mint(minted)
       })
@@ -494,6 +575,12 @@ mod usd {
       // negative liabilities make sense
       assert!( new_liabilities_lp >= dec!(0), 
         "negative liabilities");
+
+      Runtime::emit_event(
+        EcdpLiabilitiesEvent { 
+          ecdp: id.clone(), 
+          diff: dec!("-1") * burn_amount / lp_usd, 
+          new: new_liabilities_lp });
       
       self.liabilities_total -= burn_amount;
       self.liabilities_lp_total -= burn_amount / lp_usd;
@@ -532,6 +619,12 @@ mod usd {
           self.xrd_vault.put(input);
           new
         };
+      
+      Runtime::emit_event(
+        EcdpAssetsEvent { 
+          ecdp: id.clone(), 
+          diff: added_assets_lp, 
+          new: data.assets_lp + added_assets_lp });
       
       self.assets_lp_total += added_assets_lp;
       Self::authorize(&mut self.power_usd, || {
@@ -584,6 +677,9 @@ mod usd {
           self.exrd_vault.take(refund_xrd / exrdxrd)
         }
       };
+
+      Runtime::emit_event(
+        EcdpAssetsEvent { ecdp: id.clone(), diff: dec!("-1")*ass_lp, new: new_assets_lp });
       
       self.assets_lp_total -= ass_lp;
       Self::authorize(&mut self.power_usd, || {
@@ -642,6 +738,25 @@ mod usd {
       self.liabilities_lp_total -= data_ted.liabilities_lp;
 
       let data_tor: Ecdp = rm.get_non_fungible_data(&liquidator_id);
+      Runtime::emit_event(
+        EcdpLiquidatedEvent { 
+          ecdp: liquidated_id.clone() });
+      Runtime::emit_event(
+        EcdpAssetsEvent { 
+          ecdp: liquidated_id.clone(), 
+          diff: ted_remaining_assets - data_ted.assets_lp, 
+          new: ted_remaining_assets });
+      Runtime::emit_event(
+        EcdpLiabilitiesEvent { 
+          ecdp: liquidated_id.clone(), 
+          diff: dec!("-1") * data_ted.liabilities_lp, 
+          new: dec!("0") });
+      Runtime::emit_event(
+        EcdpAssetsEvent { 
+          ecdp: liquidator_id.clone(), 
+          diff: tor_cut, 
+          new: data_tor.assets_lp + tor_cut });
+      
       Self::authorize(&mut self.power_usd, || {
         rm.update_non_fungible_data(&liquidated_id, "assets_lp", 
           ted_remaining_assets
@@ -681,6 +796,11 @@ mod usd {
       //        take 1: block MP and liq when in any way flashed 
 
       self.fl_active = true;
+
+      Runtime::emit_event(
+        FlashEvent { 
+          size: size, 
+          isloan: Some(res) });
 
       let flash = ResourceManager::from(self.flash_resource)
         .mint_ruid_non_fungible(
@@ -750,6 +870,11 @@ mod usd {
       // the liablitity # doesn't change until repayment
       assert!(!self.fm_active, 
         "twice flash minted");
+
+      Runtime::emit_event(
+        FlashEvent { 
+          size: size, 
+          isloan: None });
 
       Self::authorize(&mut self.power_usd, || {
         let flash = ResourceManager::from(self.flash_resource)
@@ -828,7 +953,13 @@ mod usd {
         if tcr > self.bp {
           // derived from 
           // bp <= a / (l + mint)
-          let max_mint = (au - lu * self.bp) / self.bp;
+          let mut max_mint = (au - lu * self.bp) / self.bp;
+          // pick smaller out of the CR limit and the static size limit
+          max_mint = if max_mint > self.maximum_minted - self.liabilities_total {
+              self.maximum_minted - self.liabilities_total 
+            } else {
+              max_mint
+            };
           let mint = if max_mint > size { size } else { max_mint };
 
           assert!( mint < au && mint < lu,
@@ -883,6 +1014,11 @@ mod usd {
 
       info!("stage 1");
       let alpha: Global<AnyComponent> = self.alpha_addr.into();
+      Runtime::emit_event(
+        AAEvent { 
+          direction,
+          size: ret.amount(),
+          profit: profit.amount() });
       if direction {
         self.exrd_vault.put(ret);
 
@@ -937,6 +1073,9 @@ mod usd {
     }
 
     pub fn set_oracle(&mut self, exch: Decimal, p: Proof) {
+
+      Runtime::emit_event(OracleEvent { old: self.oracle, new: exch });
+
       if p.resource_address() == self.oracle1 {
         self.oracle = exch;
         return

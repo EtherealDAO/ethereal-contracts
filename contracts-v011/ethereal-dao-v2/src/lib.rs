@@ -86,7 +86,7 @@ mod dao {
 
       let proposals = KeyValueStore::new();
       let proposal_index = 0u64;
-      let vote_duration = 7u64; // 7 day long
+      let vote_duration = 84u64; // 7 day long
       
       let dao_addr = Self {
         power_dao: Vault::with_bucket(power_dao),
@@ -202,7 +202,7 @@ mod dao {
 
         assert!(
           Clock::current_time_is_strictly_before( 
-            p.when_submitted.add_days(self.vote_duration as i64).expect("days"), 
+            p.when_submitted.add_hours(self.vote_duration as i64).expect("days"), 
             TimePrecision::Minute ),
           "vote after closed" );
 

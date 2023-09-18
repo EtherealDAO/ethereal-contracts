@@ -1,0 +1,39 @@
+CALL_METHOD
+  Address("account_sim1c97hwc3dv98dlyusfuugy2j2v5rsqgjrdswqqwfazkffy4z2c5nh3j")
+  "lock_fee"
+  Decimal("10");
+
+# Generate proof of owner badge
+CALL_METHOD
+Address("account_sim1c97hwc3dv98dlyusfuugy2j2v5rsqgjrdswqqwfazkffy4z2c5nh3j")
+    "create_proof_of_non_fungibles"
+    Address("resource_sim1nfxxxxxxxxxxvdrwnrxxxxxxxxx004365253834xxxxxxxxxjxu0rl")
+    Array<NonFungibleLocalId>(
+        NonFungibleLocalId("[8349c6534d6a187c985bcb15c7756f7de690892458f03d81d227bed2f10b]"),
+    );
+# Register your validator, so that it can be part of the validator set
+CALL_METHOD
+    Address("validator_sim1sdyuv56ddgv8exzmev2uwat00hnfpzfytrcrmqwjy7ld9ugtallgu9")
+    "register";
+# Set your validator to accept stake from non-owners
+CALL_METHOD
+    Address("validator_sim1sdyuv56ddgv8exzmev2uwat00hnfpzfytrcrmqwjy7ld9ugtallgu9")
+    "update_accept_delegated_stake"
+    true;
+
+SET_METADATA
+    Address("validator_sim1sdyuv56ddgv8exzmev2uwat00hnfpzfytrcrmqwjy7ld9ugtallgu9")
+    "name"
+    Enum<Metadata::String>("ETHEREALDAO");
+SET_METADATA
+    Address("validator_sim1sdyuv56ddgv8exzmev2uwat00hnfpzfytrcrmqwjy7ld9ugtallgu9")
+    "description"
+    Enum<Metadata::String>("ETHEREALDAODAODAOETHEREALDAO TESTING TESTING SET TO 0% FEES FOR TESTING PURPOSES ETHEREALDAODAODAO");
+SET_METADATA
+    Address("validator_sim1sdyuv56ddgv8exzmev2uwat00hnfpzfytrcrmqwjy7ld9ugtallgu9")
+    "icon_url"
+    Enum<Metadata::Url>("https://cdn.discordapp.com/attachments/1092987092864335884/1095874817758081145/logos1.jpeg");
+SET_METADATA
+    Address("validator_sim1sdyuv56ddgv8exzmev2uwat00hnfpzfytrcrmqwjy7ld9ugtallgu9")
+    "info_url"
+    Enum<Metadata::Url>("https://ethereal.systems");

@@ -1,37 +1,51 @@
 CALL_METHOD
-    Address("component_sim1cptxxxxxxxxxfaucetxxxxxxxxx000527798379xxxxxxxxxhkrefh")
+    Address("account_sim1c97hwc3dv98dlyusfuugy2j2v5rsqgjrdswqqwfazkffy4z2c5nh3j")
     "lock_fee"
-    Decimal("5000")
+    Decimal("100")
 ;
 CALL_METHOD
-    Address("account_sim1cyd08zuxt0kmuddmwlagas6g8g4x65w2sd4dfncfp7dha8augly08k")
+    Address("account_sim1c97hwc3dv98dlyusfuugy2j2v5rsqgjrdswqqwfazkffy4z2c5nh3j")
     "withdraw"
-    Address("resource_sim1tkhc45qumqrj0zk9mhuh4dq4zgaahg6py6mm4f398lfuc3h73r4avj")
-    Decimal("10000")
+    Address("resource_sim1tknxxxxxxxxxradxrdxxxxxxxxx009923554798xxxxxxxxxakj8n3")
+    Decimal("3000")
 ;
 TAKE_FROM_WORKTOP
-    Address("resource_sim1tkhc45qumqrj0zk9mhuh4dq4zgaahg6py6mm4f398lfuc3h73r4avj")
-    Decimal("10000")
+    Address("resource_sim1tknxxxxxxxxxradxrdxxxxxxxxx009923554798xxxxxxxxxakj8n3")
+    Decimal("3000")
     Bucket("bucket1")
 ;
 CALL_METHOD
-    Address("account_sim1cyd08zuxt0kmuddmwlagas6g8g4x65w2sd4dfncfp7dha8augly08k")
+    Address("account_sim1c97hwc3dv98dlyusfuugy2j2v5rsqgjrdswqqwfazkffy4z2c5nh3j")
     "create_proof_of_non_fungibles"
-    Address("resource_sim1n2ch5adyy376lnluasdmq044q7kmwwqn6s3phs922lhyp7n340lf9l")
+    Address("resource_sim1nfw2aqx72cn3g92vsgcu9u9ngl7lvastaxgh7d0m60cng2u2q8c4ad")
     Array<NonFungibleLocalId>(
-        NonFungibleLocalId("{6f0e1e344ee34062-34c7a5ac50f6897c-ddf33a615504c1c6-744735be9371d5d3}"))
+        NonFungibleLocalId("{b9103a767b0f545b-9c3229187ecdf2b2-a6fb1e29336cc713-71a1ebea5eb1c5fb}"))
 ;
 POP_FROM_AUTH_ZONE
     Proof("proof1")
 ;
+
+CLONE_PROOF
+Proof("proof1")
+Proof("proof2");
+
+
 CALL_METHOD
-    Address("component_sim1czv2d5nf0sx5a3av3d4mnnwzlarkw7gtew3r0gl9y3535r4sc58e94")
+    Address("component_sim1cpyweca9xheyevs036xw4rpa03q6j77rczgm7h4vuzsrxxll082jhe")
     "ecdp_collateralize"
     Bucket("bucket1")
     Proof("proof1")
 ;
+
 CALL_METHOD
-    Address("account_sim1cyd08zuxt0kmuddmwlagas6g8g4x65w2sd4dfncfp7dha8augly08k")
-    "try_deposit_batch_or_refund"
+    Address("component_sim1cpyweca9xheyevs036xw4rpa03q6j77rczgm7h4vuzsrxxll082jhe")
+    "ecdp_mint"
+    Decimal("1000")
+    Proof("proof2")
+;
+
+CALL_METHOD
+    Address("account_sim1c97hwc3dv98dlyusfuugy2j2v5rsqgjrdswqqwfazkffy4z2c5nh3j")
+    "deposit_batch"
     Expression("ENTIRE_WORKTOP")
 ;

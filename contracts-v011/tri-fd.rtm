@@ -1,0 +1,44 @@
+CALL_METHOD
+    Address("account_sim1c97hwc3dv98dlyusfuugy2j2v5rsqgjrdswqqwfazkffy4z2c5nh3j")
+    "lock_fee"
+    Decimal("100")
+;
+
+CALL_METHOD
+Address("account_sim1c97hwc3dv98dlyusfuugy2j2v5rsqgjrdswqqwfazkffy4z2c5nh3j")
+"create_proof_of_amount"
+Address("resource_sim1t5hlcgt39cen7wwc7c5zccmd28atwkj9rg9p7pzqdnukwg5m2dcn2s")
+Decimal("1");
+
+CALL_METHOD
+Address("account_sim1c97hwc3dv98dlyusfuugy2j2v5rsqgjrdswqqwfazkffy4z2c5nh3j")
+"withdraw"
+Address("resource_sim1t4m8scpvl4ydhlywh4kzlf8tadwkfnrfdm6vag99c9dc4429pl9hxr")
+Decimal("1000");
+
+TAKE_FROM_WORKTOP
+Address("resource_sim1t4m8scpvl4ydhlywh4kzlf8tadwkfnrfdm6vag99c9dc4429pl9hxr")
+Decimal("1000")
+Bucket("euxlp");
+
+CALL_METHOD
+Address("account_sim1c97hwc3dv98dlyusfuugy2j2v5rsqgjrdswqqwfazkffy4z2c5nh3j")
+"withdraw"
+Address("resource_sim1t5kx359m6x4pjk625tx2q0ruyhceekml2r6uly6l9fhcsf8d4yg62s")
+Decimal("9000");
+
+TAKE_FROM_WORKTOP
+Address("resource_sim1t5kx359m6x4pjk625tx2q0ruyhceekml2r6uly6l9fhcsf8d4yg62s")
+Decimal("9000")
+Bucket("real");
+
+CALL_METHOD
+Address("component_sim1cp6ft8dmyn87p6uxlqhjkjg7jq5v2us75d04f75yscz6yz7lzux7yt")
+"first_deposit"
+Bucket("real")
+Bucket("euxlp");
+
+CALL_METHOD
+Address("account_sim1c97hwc3dv98dlyusfuugy2j2v5rsqgjrdswqqwfazkffy4z2c5nh3j")
+"deposit_batch"
+Expression("ENTIRE_WORKTOP");
