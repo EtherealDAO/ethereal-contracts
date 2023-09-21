@@ -37,8 +37,17 @@ pub enum Action {
   EDaoAddProposal(EDaoProposal),
   EDaoVote(EDaoVote, u64), 
 
+  DeltaWithdraw(Addr, String, ResourceAddress, Decimal),
+
+  OmegaIssue(Addr, String, Decimal),
+  OmegaAddAAReal(Decimal),
+
   // Protocol (Parameter) Actions
   EUSDChangeParam(u64, Decimal), // 0-based, change a single number
+
+  // first eusd -> first eusd/exrd deposit -> first real/euxlp deposit
+  // RA is intended to be the EXRD address
+  AllFirstDaisyChain(ResourceAddress),
 
   // For starting it up, would be not very useful for stopping
   // unless as last action in the gov update pipeline
@@ -62,6 +71,18 @@ struct SubmittedProposal {
   votes_for: Decimal,
   votes_against: Decimal,
   votes_abstaining: Decimal
+}
+
+#[derive(ScryptoSbor, ScryptoEvent)]
+struct ProposalSubmittedEvent {
+  proposal: u64,
+  who_submitted: NonFungibleLocalId
+}
+
+#[derive(ScryptoSbor, ScryptoEvent)]
+struct ProposalFinalizedEvent {
+  proposal: u64,
+  result: bool
 }
 
 #[blueprint]
@@ -155,7 +176,7 @@ mod omega {
       let proposals = KeyValueStore::new();
 
       let proposal_payment = dec!(100);
-      let vote_duration = 36u64;
+      let vote_duration = 1u64; // TODO: 36u6 / 3 days on release
 
       Self {
         dao_addr,
@@ -300,7 +321,7 @@ mod omega {
         self.proposal_index,
         SubmittedProposal {
           is_active: true,
-          proposal, 
+          proposal: proposal.clone(), 
           when_submitted: Clock::current_time_rounded_to_minutes(),
           who_submitted: id.clone(),
           votes_for: dec!(0), 
@@ -308,6 +329,9 @@ mod omega {
           votes_abstaining: dec!(0)
         }
       );
+
+      Runtime::emit_event( 
+        ProposalSubmittedEvent { proposal: self.proposal_index, who_submitted: id.clone() } );
 
       self.proposal_index += 1;
     }
@@ -323,7 +347,7 @@ mod omega {
 
       assert!(
         Clock::current_time_is_strictly_before( 
-          p.when_submitted.add_days(self.vote_duration as i64).expect("days"), 
+          p.when_submitted.add_hours(self.vote_duration as i64).expect("days"), 
           TimePrecision::Minute ),
         "vote after closed" );
 
@@ -359,20 +383,33 @@ mod omega {
     }
 
     pub fn finalize_proposal(&mut self, proposal: u64) {
-      let mut p = self.proposals.get_mut(&proposal).unwrap();
+      let mut execute_flag = None;
+      {
+        let mut p = self.proposals.get_mut(&proposal).unwrap();
 
-      assert!( p.is_active, 
-        "finalize on finalized proposal"); 
+        assert!( p.is_active, 
+          "finalize on finalized proposal"); 
 
-      assert!(
-        Clock::current_time_is_strictly_after( 
-          p.when_submitted.add_hours(self.vote_duration as i64).expect("days"), 
-          TimePrecision::Minute ),
-        "finalize before closed" );
-      
-      // TODO: if passed, execute
+        assert!(
+          Clock::current_time_is_strictly_after( 
+            p.when_submitted.add_hours(self.vote_duration as i64).expect("days"), 
+            TimePrecision::Minute ),
+          "finalize before closed" );
 
-      p.is_active = false;
+        p.is_active = false;
+        
+        // no quorum yet
+        if p.votes_for - p.votes_against > dec!(0) {
+          execute_flag = Some(p.proposal.clone());
+        } 
+      }
+
+      if let Some(p) = execute_flag {
+        self._execute_proposal(&p);
+        Runtime::emit_event( ProposalFinalizedEvent { proposal, result: true } );
+      } else {
+        Runtime::emit_event( ProposalFinalizedEvent { proposal, result: false } );
+      }
     }
 
     // pupeteer omega by delta
@@ -404,7 +441,7 @@ mod omega {
       }
 
       // this *cannot* 
-      fn _check_addr(a: &Addr) {
+      fn check_addr(a: &Addr) {
         match a {
           Ok(_) => (),
           Err((_, s)) => check_string(&*s)
@@ -444,9 +481,6 @@ mod omega {
 
       match action {
         Action::TextOnly(s) => check_string(&*s),
-        // Protocol actions
-        // Action::ProtocolUpdateParams() => (), // TODO
-        // Action::ProtocolUpdate() => (), // TODO
 
         // EDAO actions
         Action::EDaoAddProposal(p) => check_edao_proposal(&p),
@@ -465,9 +499,15 @@ mod omega {
         // // Alpha actions 
         // Action::AlphaChangeParams(_, _, _) => (),
 
-        // // Delta actions 
-        // Action::DeltaPuppeteer(p) => check_delta_proposal(&p),
-        // Action::DeltaAllowSpend(_, _) => ()
+        // Delta actions 
+        Action::DeltaWithdraw(addr, s, _, _) => { check_addr(&addr); check_string(&s) },
+
+        // Omega actions
+        Action::OmegaIssue(addr, s, _) => { check_addr(&addr); check_string(&s) },
+        Action::OmegaAddAAReal(_) => (),
+
+        // Setup Actions
+        Action::AllFirstDaisyChain(_) => ()
       }
     }
 
@@ -588,26 +628,79 @@ mod omega {
           );
         },
 
-      //   // Alpha actions 
-      //   Action::AlphaChangeParams(vote_duration, vote_quorum, proposal_payment) => {
-      //     self.alpha_vote_duration = *vote_duration;
-      //     self.alpha_vote_quorum = *vote_quorum;
-      //     self.alpha_proposal_payment = *proposal_payment;
-      //   },
+        // Delta actions 
+        Action::DeltaWithdraw(addr, s, ra, size) => {
+          let dao: Global<AnyComponent> = self.dao_addr.into();
+          let (a, d, _) = dao.call_raw::<(ComponentAddress, ComponentAddress, ComponentAddress)>
+            ("get_branch_addrs", scrypto_args!());
 
-      //   // Delta actions 
-      //   Action::DeltaPuppeteer(delta_proposal) => 
-      //     self.power_alpha.authorize(||
-      //       Delta::at(
-      //         Dao::at(self.dao_addr).get_branch_addrs().1
-      //       ).puppeteer(delta_proposal.clone())
-      //   ),
-      //   Action::DeltaAllowSpend(asset, amount) => 
-      //     self.power_alpha.authorize(|| 
-      //       Delta::at(
-      //         Dao::at(self.dao_addr).get_branch_addrs().1
-      //       ).allow_spend(*asset, *amount)
-      //   )
+          let alpha: Global<AnyComponent> = a.into();
+          let delta: Global<AnyComponent> = d.into();
+
+          let p = Self::authorize(&mut self.power_omega, || 
+            alpha.call_raw::<FungibleProof>("prove_alpha", scrypto_args!()));
+          let ret = p.authorize(|| 
+            delta.call_raw::<Bucket>("withdraw", scrypto_args!(ra, size)));
+
+          Self::call_addr(addr, &*s, scrypto_args!(ret));
+        },
+
+        // Omega actions
+        Action::OmegaIssue(addr, s, size) => 
+          Self::call_addr(addr, &*s, scrypto_args!(self.token.take(*size))),
+        Action::OmegaAddAAReal(size) => {
+          let dao: Global<AnyComponent> = self.dao_addr.into();
+          let (_, d, _) = dao.call_raw::<(ComponentAddress, ComponentAddress, ComponentAddress)>
+            ("get_branch_addrs", scrypto_args!());
+
+          let delta: Global<AnyComponent> = d.into();
+
+          delta.call_raw::<()>("add_to_aa", scrypto_args!(self.token.take(*size)));
+        },
+
+        // Setup Actions
+        Action::AllFirstDaisyChain(exrd) => {
+          let dao: Global<AnyComponent> = self.dao_addr.into();
+          let (a, d, _) = dao.call_raw::<(ComponentAddress, ComponentAddress, ComponentAddress)>
+            ("get_branch_addrs", scrypto_args!());
+
+          let alpha: Global<AnyComponent> = a.into();
+          let (u, e, t) = alpha.call_raw::<(ComponentAddress, ComponentAddress, ComponentAddress)>
+            ("get_app_addrs", scrypto_args!());
+
+          let delta: Global<AnyComponent> = d.into();
+          let pa = Self::authorize(&mut self.power_omega, || 
+            alpha.call_raw::<FungibleProof>("prove_alpha", scrypto_args!()));
+          
+          // 50k for 'backing' the 777 EUSD, 17k to be paired with EUSD
+          // the numbers are mostly there to be 'close enough'
+          // but otherwise statically well telegraphed
+          let mut exrd = pa.authorize(|| 
+            delta.call_raw::<Bucket>("withdraw", scrypto_args!(exrd, dec!("67000"))));
+
+          let pa0 = Self::authorize(&mut self.power_omega, || 
+            alpha.call_raw::<FungibleProof>("prove_azero", scrypto_args!()));
+          
+          pa0.authorize(|| {
+            let usd: Global<AnyComponent> = u.into();
+            let eux: Global<AnyComponent> = e.into();
+            let tri: Global<AnyComponent> = t.into();
+
+            let (ecdp, eusd) = usd.call_raw::<(Bucket, Bucket)>("first_ecdp", 
+              scrypto_args!(exrd.take(dec!("50000"))));
+            
+            let euxlp = eux.call_raw::<Bucket>("first_deposit", 
+              scrypto_args!(eusd, exrd));
+
+            // TODO put number after price discovery happens
+            let real = self.token.take(dec!("3.50")); 
+            let etlp = tri.call_raw::<Bucket>("first_deposit",
+              scrypto_args!(real, euxlp));
+
+            delta.call_raw::<()>("deposit", scrypto_args!(etlp));
+            delta.call_raw::<()>("deposit", scrypto_args!(ecdp));
+          });
+        }
       }
     }
 
@@ -622,6 +715,19 @@ mod omega {
       });
       power.put(temp.into());
       return ret
+    }
+    
+    // type Addr = Result<ComponentAddress, (PackageAddress, String)>;
+    fn call_addr(addr: &Addr, s: &str, args: Vec<u8>) {
+      match addr {
+        Ok(ca) => {
+          let c: Global<AnyComponent> = (*ca).into();
+          c.call_raw::<()>(s, args);
+        },
+        Err((pa, md)) => {
+          ScryptoVmV1Api::blueprint_call(*pa, md, &*s, args);
+        }
+      }
     }
   }
 }

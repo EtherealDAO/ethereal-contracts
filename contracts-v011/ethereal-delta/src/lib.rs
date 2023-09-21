@@ -13,6 +13,8 @@ mod delta {
       aa_tap => restrict_to: [alpha];
       aa_out => restrict_to: [alpha];
       deposit => PUBLIC;
+      add_to_aa => PUBLIC;
+      withdraw => restrict_to: [alpha];
       prove_delta => restrict_to: [alpha];
       set_dao_addr => restrict_to: [zero];
     }
@@ -27,13 +29,12 @@ mod delta {
     // REAL (to be paired with EUXLP)
     // EUXLP (stored, if ever REAL is depleted)
     aa_treasury: (Vault, Vault),
-    // doubles down as a whitelist and approved spending
-    treasury: KeyValueStore<ResourceAddress, (Decimal, Vault)>,
+    treasury: KeyValueStore<ResourceAddress, Vault>,
   }
 
   impl Delta {
     pub fn from_nothing(dao_addr: ComponentAddress, power_zero: ResourceAddress,
-      power_alpha: ResourceAddress, power_delta: Bucket, whitelist: Vec<(ResourceAddress, Decimal)>,
+      power_alpha: ResourceAddress, power_delta: Bucket,
       real:Bucket, euxlp: ResourceAddress, bang: ComponentAddress
     ) -> ComponentAddress {
       // needs to whitelist
@@ -42,9 +43,6 @@ mod delta {
       let aa_treasury = (Vault::with_bucket(real), Vault::new(euxlp));
 
       let treasury = KeyValueStore::new();
-      for (ra, d) in whitelist {
-        treasury.insert(ra, (d, Vault::new(ra)));
-      }
 
       Self {
         dao_addr,
@@ -86,10 +84,24 @@ mod delta {
     }
 
     pub fn deposit(&mut self, input: Bucket) {
-      match self.treasury.get_mut(&input.resource_address()) {
-        None => panic!("non whitelist deposit type"),
-        Some(mut v) => v.deref_mut().1.put(input)
-      }
+      if let Some(mut v) = self.treasury.get_mut(&input.resource_address()) {
+        v.deref_mut().put(input);
+        return
+      };
+      self.treasury.insert(input.resource_address(), Vault::with_bucket(input))
+    }
+
+    pub fn withdraw(&mut self, resource: ResourceAddress, amount: Decimal) -> Bucket {
+      if let Some(mut v) = self.treasury.get_mut(&resource) {
+        return v.deref_mut().take(amount)
+      } 
+      panic!("no resource found");
+    }
+
+    // add REAL to AA real -- future update could allow more complex manipulation 
+    // back and forth
+    pub fn add_to_aa(&mut self, input: Bucket) {
+      self.aa_treasury.0.put(input)
     }
 
     // GIVE ME ALL OF THE REAL

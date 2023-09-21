@@ -263,7 +263,7 @@ mod dao {
 
       assert!(
         Clock::current_time_is_strictly_after( 
-          p.when_submitted.add_days(self.vote_duration as i64).expect("days"), 
+          p.when_submitted.add_hours(self.vote_duration as i64).expect("days"), 
           TimePrecision::Minute ),
         "finalize before closed" );
       

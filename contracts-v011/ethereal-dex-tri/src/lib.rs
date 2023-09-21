@@ -41,7 +41,7 @@ mod tri {
       power_azero: ResourceAddress,
       power_tri: Bucket, 
       t1: ResourceAddress, t1w: Decimal, t2: ResourceAddress, t2w: Decimal,
-      swap_fee: Decimal, bang: ComponentAddress )-> (ComponentAddress, ResourceAddress) {
+      swap_fee: Decimal, bang: ComponentAddress )-> ComponentAddress {
      
       assert!( t1w + t2w == dec!("1") && t1w > dec!("0") && t2w > dec!("0"), 
         "weights must sum to 1 and both be positive");
@@ -133,7 +133,7 @@ mod tri {
       .globalize()
       .address();
 
-      return (a1, lp_ra)
+      return a1
     }
 
     // AuthRule: power_zero

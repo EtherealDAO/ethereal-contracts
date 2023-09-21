@@ -35,7 +35,6 @@ mod dao {
 
     power_delta: Vault,
     delta_p: PackageAddress,
-    delta_whitelist: Vec<(ResourceAddress, Decimal)>,
     real: Vault,
     euxlp: ResourceAddress,
     bang: ComponentAddress,
@@ -53,7 +52,7 @@ mod dao {
       alpha_p: PackageAddress, delta_p: PackageAddress, omega_p: PackageAddress,
       usd_p: PackageAddress, eux_p: PackageAddress, tri_p: PackageAddress, daov2_p: PackageAddress,
       real: Bucket, exrd: ResourceAddress, exrd_validator: ComponentAddress, bang: ComponentAddress
-      ) -> (ComponentAddress, Bucket, Bucket, Bucket) {
+      ) -> (ComponentAddress, Bucket, Bucket) {
 
       let u_lower = dec!("0.99");
       let u_upper = dec!("1.01");
@@ -106,7 +105,7 @@ mod dao {
         .create_with_no_initial_supply()
         .address();
 
-      let mut power_alpha = ResourceBuilder::new_fungible(OwnerRole::None)
+      let power_alpha = ResourceBuilder::new_fungible(OwnerRole::None)
         .metadata(
           metadata!(
             roles {
@@ -123,6 +122,7 @@ mod dao {
           )
         )
         .mint_initial_supply(1);
+
       let power_delta = ResourceBuilder::new_fungible(OwnerRole::None)
         .metadata(
           metadata!(
@@ -277,13 +277,6 @@ mod dao {
         ResourceManager::from(power_zero).mint(1)
       );
 
-      // TODO REMOVE
-      let testing_azero = power_alpha.as_fungible().authorize_with_all(|| 
-        ResourceManager::from(power_azero).mint(1)
-      );
-
-      let real_resource = real.resource_address();
-
       let omega_resource = power_omega.resource_address();
 
       let dao_addr = Self {
@@ -306,7 +299,6 @@ mod dao {
 
         power_delta: Vault::with_bucket(power_delta.into()),
         delta_p,
-        delta_whitelist: vec![],
         real: Vault::with_bucket(real),
         euxlp: power_zero,
         bang,
@@ -339,8 +331,6 @@ mod dao {
       )
       .globalize()
       .address();
-
-      let alpha_resource = power_alpha.resource_address();
 
       let out = ScryptoVmV1Api::blueprint_call(
             alpha_p,
@@ -388,11 +378,6 @@ mod dao {
         let dao: Global<AnyComponent> = dao_addr.into();
         dao.call_raw::<()>(
           "set_phase2_args", scrypto_args!(
-            vec![
-            (XRD, dec!(0)), (real_resource, dec!(0)), 
-            (eusd_resource, dec!(0)), (euxlp_resource, dec!(0)),
-            (exrd, dec!(0))
-            ],
             euxlp_resource
           )
         );
@@ -404,7 +389,7 @@ mod dao {
       the_zero.burn();
       
       // todo remove azero
-      (dao_addr, testing_azero.into(), oracle1.into(), oracle2.into())
+      (dao_addr, oracle1.into(), oracle2.into())
     }
 
     // deploy second part
@@ -438,15 +423,14 @@ mod dao {
               self.bang
             )
         );
-      let (tri_addr, tlp_resource): (ComponentAddress, ResourceAddress) = 
+      let tri_addr: ComponentAddress = 
         scrypto_decode(&out).unwrap();
 
       let delta_resource = self.power_delta.resource_address();
 
       let amnt = self.real.amount();
-      let aa_real = self.real.take(dec!("0.05")*amnt);
+      let aa_real = self.real.take(dec!("0.003")*amnt);
 
-      self.delta_whitelist.push((tlp_resource, dec!(0)));
       let out = ScryptoVmV1Api::blueprint_call(
             self.delta_p,
             "Delta",
@@ -454,7 +438,6 @@ mod dao {
             scrypto_args!(
               dao_addr, self.power_zero,
               alpha_resource, self.power_delta.take_all(),
-              &self.delta_whitelist,
               aa_real, 
               self.euxlp,
               self.bang
@@ -517,9 +500,7 @@ mod dao {
 
     // phase-braiding functions
 
-    pub fn set_phase2_args(&mut self, wl: Vec<(ResourceAddress, Decimal)>, 
-      euxlp: ResourceAddress) {
-      self.delta_whitelist = wl;
+    pub fn set_phase2_args(&mut self, euxlp: ResourceAddress) {
       self.euxlp = euxlp;
     }
 
