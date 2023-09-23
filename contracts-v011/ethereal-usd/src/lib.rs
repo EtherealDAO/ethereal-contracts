@@ -1,5 +1,4 @@
 use scrypto::prelude::*;
-use scrypto::blueprints::consensus_manager::TimePrecision;
 
 // let component: Global<AnyComponent> = Global(ObjectStub::new(ObjectStubHandle::Global(GlobalAddress::from(component_address))));
 // let return_value = component.call_raw::<ZygomebFancyReturnType>("method_name", scrypto_args!(param1));

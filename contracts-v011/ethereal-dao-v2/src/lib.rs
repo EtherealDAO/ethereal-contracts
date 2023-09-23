@@ -1,6 +1,5 @@
 use scrypto::prelude::*;
 use std::ops::DerefMut;
-use scrypto::blueprints::consensus_manager::TimePrecision;
 
 // SCHEMA:
 // blueprint_call(arg1, arg2, arg3, scrypto_args!(power_zero.mint(1)))

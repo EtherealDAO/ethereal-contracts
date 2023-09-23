@@ -1,6 +1,5 @@
 use scrypto::prelude::*;
 use std::ops::DerefMut;
-use scrypto::blueprints::consensus_manager::TimePrecision;
 
 #[derive(ScryptoSbor, NonFungibleData)]
 pub struct UserReceipt {
