@@ -85,6 +85,7 @@ struct ProposalFinalizedEvent {
 }
 
 #[blueprint]
+#[types(UserReceipt, Proposal, Addr, Action, Vote, SubmittedProposal, u64)]
 mod omega {
   enable_method_auth! {
     roles {
@@ -135,7 +136,8 @@ mod omega {
       let staked_resource = token.resource_address();
       let staked_vault = Vault::new(staked_resource);
 
-      let nft_resource = ResourceBuilder::new_ruid_non_fungible::<UserReceipt>(OwnerRole::None)
+      let nft_resource = 
+        ResourceBuilder::new_ruid_non_fungible_with_registered_type::<UserReceipt>(OwnerRole::None)
         .metadata(metadata!(
           roles {
             metadata_setter => rule!(require(power_omega.resource_address()));
@@ -172,7 +174,7 @@ mod omega {
         .address();
 
       let proposal_index = 0;
-      let proposals = KeyValueStore::new();
+      let proposals = KeyValueStore::new_with_registered_type();
 
       let proposal_payment = dec!(100);
       let vote_duration = 1u64; // TODO: 36u6 / 3 days on release
