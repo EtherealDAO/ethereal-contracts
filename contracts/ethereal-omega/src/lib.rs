@@ -693,16 +693,22 @@ mod omega {
             let (ecdp, eusd) = usd.call_raw::<(Bucket, Bucket)>("first_ecdp", 
               scrypto_args!(exrd.take(dec!("50000"))));
             
-            let euxlp = eux.call_raw::<Bucket>("first_deposit", 
+            let (euxlp, orem) = eux.call_raw::<(Bucket, Option<Bucket>)>("first_deposit", 
               scrypto_args!(eusd, exrd));
             
             // TODO put number after price discovery happens
             let real = self.token.take(dec!("3.50")); 
-            let etlp = tri.call_raw::<Bucket>("first_deposit",
+            let (etlp, orem2) = tri.call_raw::<(Bucket, Option<Bucket>)>("first_deposit",
               scrypto_args!(real, euxlp));
 
             delta.call_raw::<()>("deposit", scrypto_args!(etlp));
             delta.call_raw::<()>("deposit", scrypto_args!(ecdp));
+            if let Some(rem) = orem {
+              delta.call_raw::<()>("deposit", scrypto_args!(rem));
+            };
+            if let Some(rem2) = orem2 {
+              delta.call_raw::<()>("deposit", scrypto_args!(rem2));
+            };
           });
           a0.burn();
         }
