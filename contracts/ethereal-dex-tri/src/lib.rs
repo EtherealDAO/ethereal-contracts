@@ -57,7 +57,7 @@ mod tri {
         None
       );
 
-      let mut power_tri = Vault::with_bucket(power_tri);
+      let power_tri = Vault::with_bucket(power_tri);
 
       let lp_ga: GlobalAddress = pool.get_metadata("pool_unit")
         .expect("incoherence").expect("incoherence"); // :^)
@@ -65,7 +65,7 @@ mod tri {
       // yes, this is the best way afaik lmao
       let lp_ra = ResourceAddress::new_or_panic(Into::<[u8; 30]>::into(lp_ga));
 
-      Self::authorize(&mut power_tri, || {
+      power_tri.as_fungible().authorize_with_amount(dec!(1), || {
         let rm = ResourceManager::from(lp_ra);
 
         rm.set_metadata(
@@ -168,7 +168,7 @@ mod tri {
 
       let mut pool: Global<TwoResourcePool> = self.pool.into();
 
-      Self::authorize(&mut self.power_tri, ||
+      self.power_tri.as_fungible().authorize_with_amount(dec!(1), ||
         pool.contribute((b1, b2))
       )
     }
@@ -188,7 +188,7 @@ mod tri {
 
       let mut pool: Global<TwoResourcePool> = self.pool.into();
 
-      Self::authorize(&mut self.power_tri, ||
+      self.power_tri.as_fungible().authorize_with_amount(dec!(1), ||
         pool.contribute((b1, b2))
       )
     }
@@ -231,22 +231,11 @@ mod tri {
             .pow((dec!("1") - w_out) / w_out).expect("power incoherence") 
         );
 
-      Self::authorize(&mut self.power_tri, || {
+      self.power_tri.as_fungible().authorize_with_amount(dec!(1), || {
         pool.protected_deposit(input);
         pool.protected_withdraw(ra_out, size_out, 
           WithdrawStrategy::Rounded(RoundingMode::ToZero))
       })
-    }
-
-    // internal
-
-    fn authorize<F: FnOnce() -> O, O>(power_tri: &mut Vault, f: F) -> O {
-      let temp = power_tri.as_fungible().take_all();
-      let ret = temp.authorize_with_all(|| {
-        f()
-      });
-      power_tri.put(temp.into());
-      return ret
     }
 
     // AUXILIARY (for interop)

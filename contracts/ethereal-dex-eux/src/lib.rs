@@ -145,7 +145,7 @@ mod eux {
       self.pool.0.put(b1);
       self.pool.1.put(b2);
 
-      Self::authorize(&mut self.power_eux, ||
+      self.power_eux.as_fungible().authorize_with_amount(dec!(1), ||
         (ResourceManager::from(self.pool_lp.0).mint(initmint), None)
       )
     }
@@ -177,7 +177,7 @@ mod eux {
         self.pool.1.put(b2);
 
         return (
-          Self::authorize(&mut self.power_eux, 
+          self.power_eux.as_fungible().authorize_with_amount(dec!(1),
             || ResourceManager::from(self.pool_lp.0).mint(minted)),
           Some(b1)
         )
@@ -192,7 +192,7 @@ mod eux {
         self.pool.1.put(b2.take(in2new));
 
         return (
-          Self::authorize(&mut self.power_eux, 
+          self.power_eux.as_fungible().authorize_with_amount(dec!(1),
             || ResourceManager::from(self.pool_lp.0).mint(minted)),
           Some(b2)
         )
@@ -205,7 +205,7 @@ mod eux {
         self.pool.1.put(b2);
 
         return (
-          Self::authorize(&mut self.power_eux, 
+          self.power_eux.as_fungible().authorize_with_amount(dec!(1), 
             || ResourceManager::from(self.pool_lp.0).mint(minted)),
           None
         )
@@ -221,7 +221,7 @@ mod eux {
 
       let per = input.amount() / self.pool_lp.1;
       self.pool_lp.1 -= input.amount();
-      Self::authorize(&mut self.power_eux, 
+      self.power_eux.as_fungible().authorize_with_amount(dec!(1),
         || ResourceManager::from(self.pool_lp.0).burn(input));
 
       return (
@@ -301,7 +301,7 @@ mod eux {
 
         if let Some(size) = self.in_given_price(target, direction) {
 
-          if let Some(input1) = Self::authorize(&mut self.power_eux, || { 
+          if let Some(input1) = self.power_eux.as_fungible().authorize_with_amount(dec!(1), || {
             eusd.call_raw::<Option<Bucket>>
               ("aa_woke", scrypto_args!(size, direction))
           }) {
@@ -413,17 +413,6 @@ mod eux {
       // post-swap
       self.perform_aa(direction, false, ran);
 
-      return ret
-    }
-
-    // internal
-
-    fn authorize<F: FnOnce() -> O, O>(power_eux: &mut Vault, f: F) -> O {
-      let temp = power_eux.as_fungible().take_all();
-      let ret = temp.authorize_with_all(|| {
-        f()
-      });
-      power_eux.put(temp.into());
       return ret
     }
 

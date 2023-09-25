@@ -398,7 +398,7 @@ mod dao {
        "out of order call");
       
       self.phase += 1;
-      let the_zero = Self::authorize(&mut self.power_dao, || 
+      let the_zero = self.power_dao.as_fungible().authorize_with_amount(dec!(1), ||
         ResourceManager::from(self.power_zero).mint(1)
       );
 
@@ -503,17 +503,5 @@ mod dao {
     pub fn set_phase2_args(&mut self, euxlp: ResourceAddress) {
       self.euxlp = euxlp;
     }
-
-    // internal
-
-    fn authorize<F: FnOnce() -> O, O>(power: &mut Vault, f: F) -> O {
-      let temp = power.as_fungible().take_all();
-      let ret = temp.authorize_with_all(|| {
-        f()
-      });
-      power.put(temp.into());
-      return ret
-    }
-
   }
 }

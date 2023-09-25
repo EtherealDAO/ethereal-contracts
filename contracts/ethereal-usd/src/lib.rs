@@ -68,9 +68,10 @@ struct OracleEvent {
 // code
 
 #[blueprint]
-#[types(Ecdp, Flash, OracleEvent, AAEvent, 
-  FlashEvent, NewEcdpEvent, EcdpLiquidatedEvent,
-  EcdpAssetsEvent, EcdpLiabilitiesEvent)]
+#[types(Ecdp, Flash)]
+#[events(FlashEvent, NewEcdpEvent, EcdpLiquidatedEvent,
+  EcdpAssetsEvent, EcdpLiabilitiesEvent,
+  OracleEvent, AAEvent)]
 mod usd {
   enable_method_auth! {
     roles {
@@ -452,7 +453,7 @@ mod usd {
       assert!( self.liabilities_lp_total == dec!(0) && self.assets_lp_total == dec!(0),
         "not the first ecdp" );
 
-      let ecdp = Self::authorize(&mut self.power_usd, || 
+      let ecdp = self.power_usd.as_fungible().authorize_with_amount(dec!(1), ||  
         ResourceManager::from(self.ecdp_resource)
           .mint_ruid_non_fungible(
             Ecdp { assets_lp: dec!(0), liabilities_lp: dec!(0) }
@@ -476,7 +477,7 @@ mod usd {
       Runtime::emit_event(
         EcdpLiabilitiesEvent { ecdp: id.clone(), diff: liabilities_lp, new: liabilities_lp });
 
-      let eusd = Self::authorize(&mut self.power_usd, || {
+      let eusd = self.power_usd.as_fungible().authorize_with_amount(dec!(1), || {
         let rm = ResourceManager::from(self.ecdp_resource);
         rm.update_non_fungible_data(&id, "assets_lp", 
           assets_lp
@@ -500,7 +501,7 @@ mod usd {
 
       self.xrd_vault.put(fee);
       
-      Self::authorize(&mut self.power_usd, || {
+      self.power_usd.as_fungible().authorize_with_amount(dec!(1), || {
         let out = ResourceManager::from(self.ecdp_resource)
           .mint_ruid_non_fungible(
             Ecdp { assets_lp: dec!(0), liabilities_lp: dec!(0) }
@@ -546,7 +547,7 @@ mod usd {
 
       self.liabilities_total += minted;
       self.liabilities_lp_total += lia_lp;
-      Self::authorize(&mut self.power_usd, || {
+      self.power_usd.as_fungible().authorize_with_amount(dec!(1), || {
         rm.update_non_fungible_data(&id, "liabilities_lp", 
           new_liabilities_lp
         );
@@ -588,7 +589,7 @@ mod usd {
       
       self.liabilities_total -= burn_amount;
       self.liabilities_lp_total -= burn_amount / lp_usd;
-      Self::authorize(&mut self.power_usd, || {
+      self.power_usd.as_fungible().authorize_with_amount(dec!(1), || {
         rm.update_non_fungible_data(&id, "liabilities_lp", 
           new_liabilities_lp
         );
@@ -631,7 +632,7 @@ mod usd {
           new: data.assets_lp + added_assets_lp });
       
       self.assets_lp_total += added_assets_lp;
-      Self::authorize(&mut self.power_usd, || {
+      self.power_usd.as_fungible().authorize_with_amount(dec!(1), || {
         rm.update_non_fungible_data(&id, "assets_lp", 
           data.assets_lp + added_assets_lp
         );
@@ -686,7 +687,7 @@ mod usd {
         EcdpAssetsEvent { ecdp: id.clone(), diff: dec!("-1")*ass_lp, new: new_assets_lp });
       
       self.assets_lp_total -= ass_lp;
-      Self::authorize(&mut self.power_usd, || {
+      self.power_usd.as_fungible().authorize_with_amount(dec!(1), || {
         rm.update_non_fungible_data(&id, "assets_lp", 
           new_assets_lp
         );
@@ -761,7 +762,7 @@ mod usd {
           diff: tor_cut, 
           new: data_tor.assets_lp + tor_cut });
       
-      Self::authorize(&mut self.power_usd, || {
+      self.power_usd.as_fungible().authorize_with_amount(dec!(1), || {
         rm.update_non_fungible_data(&liquidated_id, "assets_lp", 
           ted_remaining_assets
         );
@@ -806,13 +807,14 @@ mod usd {
           size: size, 
           isloan: Some(res) });
 
-      let flash = ResourceManager::from(self.flash_resource)
-        .mint_ruid_non_fungible(
-          Flash {
-            size: size*self.flash_fee,
-            isloan: Some(res)
-          }
-        );
+      let flash = self.power_usd.as_fungible().authorize_with_amount(dec!(1), ||
+        ResourceManager::from(self.flash_resource)
+          .mint_ruid_non_fungible(
+            Flash {
+              size: size*self.flash_fee,
+              isloan: Some(res)
+            }
+          ));
       (if res { self.exrd_vault.take(size) } else { self.xrd_vault.take(size) }, flash)
     }
 
@@ -861,7 +863,7 @@ mod usd {
       };
 
       self.fl_active = false;
-      Self::authorize(&mut self.power_usd, || {
+      self.power_usd.as_fungible().authorize_with_amount(dec!(1), || {
         ResourceManager::from(self.flash_resource).burn(flash)
       })
     }
@@ -880,7 +882,7 @@ mod usd {
           size: size, 
           isloan: None });
 
-      Self::authorize(&mut self.power_usd, || {
+      self.power_usd.as_fungible().authorize_with_amount(dec!(1), || {
         let flash = ResourceManager::from(self.flash_resource)
           .mint_ruid_non_fungible(
             Flash {
@@ -914,7 +916,7 @@ mod usd {
       self.fm_active = false;
       self.liabilities_total -= input.amount() * (dec!(1) - self.flash_fee);
 
-      Self::authorize(&mut self.power_usd, || {
+      self.power_usd.as_fungible().authorize_with_amount(dec!(1), || {
         ResourceManager::from(self.eusd_resource).burn(input);
         ResourceManager::from(self.flash_resource).burn(flash);
       });
@@ -969,7 +971,7 @@ mod usd {
           assert!( mint < au && mint < lu,
             "incoherence" );
 
-          Self::authorize(&mut self.power_usd, || {
+          self.power_usd.as_fungible().authorize_with_amount(dec!(1), || {
             self.liabilities_total += mint;
             Some(ResourceManager::from(self.eusd_resource).mint(mint))
           })
@@ -980,7 +982,7 @@ mod usd {
         let exrdxrd = self.exrdxrd();
         // above emergency, can do MPdown
         if tcr > self.ep {
-          Self::authorize(&mut self.power_usd, || {            
+          self.power_usd.as_fungible().authorize_with_amount(dec!(1), || {            
             if self.exrd_vault.amount() <= size {
               let valid: Global<AnyComponent> = self.exrd_validator.into();
               let diff = size - self.exrd_vault.amount();
@@ -1031,7 +1033,7 @@ mod usd {
       } else {
         // todo double check
         self.liabilities_total -= ret.amount();
-        Self::authorize(&mut self.power_usd, || {
+        self.power_usd.as_fungible().authorize_with_amount(dec!(1), || {
           ResourceManager::from(self.eusd_resource).burn(ret)
         });
 
@@ -1065,15 +1067,6 @@ mod usd {
       } else {
         Some(xrdusd)
       }
-    }
-
-    fn authorize<F: FnOnce() -> O, O>(power: &mut Vault, f: F) -> O {
-      let temp = power.as_fungible().take_all();
-      let ret = temp.authorize_with_all(|| {
-        f()
-      });
-      power.put(temp.into());
-      return ret
     }
 
     pub fn set_oracle(&mut self, exch: Decimal, p: Proof) {

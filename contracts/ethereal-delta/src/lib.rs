@@ -140,16 +140,5 @@ mod delta {
     }
 
     // todo move from treasury to aa treasury
-
-    // internal 
-
-    // fn authorize<F: FnOnce() -> O, O>(power: &mut Vault, f: F) -> O {
-    //   let temp = power.as_fungible().take_all();
-    //   let ret = temp.authorize_with_all(|| {
-    //     f()
-    //   });
-    //   power.put(temp.into());
-    //   return ret
-    // }
   }
 }

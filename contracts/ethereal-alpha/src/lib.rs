@@ -15,7 +15,6 @@ mod alpha {
       set_app_addrs => restrict_to: [zero, azero];
       get_app_addrs => PUBLIC;
       prove_alpha => restrict_to: [omega];
-      prove_azero => restrict_to: [omega];
       make_azero => restrict_to: [omega];
       set_dao_addr => restrict_to: [zero];
     }
@@ -109,7 +108,7 @@ mod alpha {
       let delta: Global<AnyComponent> = delta_ca.into();
       
       // token boosted POL acquisition
-      let aaboo = Self::authorize(&mut self.power_alpha, || { 
+      let aaboo = self.power_alpha.as_fungible().authorize_with_amount(dec!(1), || { 
         let (real, rem) = delta.call_raw::<(Option<Bucket>, Option<Bucket>)>
           ("aa_tap", scrypto_args!());
         
@@ -139,7 +138,7 @@ mod alpha {
 
           info!("aa_rope OUT"); 
 
-          Self::authorize(&mut self.power_alpha, || { 
+          self.power_alpha.as_fungible().authorize_with_amount(dec!(1), || {
             delta.call_raw::<()>
               ("aa_out", scrypto_args!(remainder));
             delta.call_raw::<()>
@@ -147,13 +146,13 @@ mod alpha {
           });
         } else {
 
-          Self::authorize(&mut self.power_alpha, || { 
-            delta.call_raw::<()>
+        self.power_alpha.as_fungible().authorize_with_amount(dec!(1), || {
+          delta.call_raw::<()>
               ("aa_out", scrypto_args!(Some(input)));
           });
         }
       } else {
-        Self::authorize(&mut self.power_alpha, || { 
+        self.power_alpha.as_fungible().authorize_with_amount(dec!(1), || {
           delta.call_raw::<()>
             ("aa_out", scrypto_args!(Some(input)));
         });
@@ -177,29 +176,9 @@ mod alpha {
       self.power_alpha.as_fungible().create_proof_of_amount(dec!(1))
     }
 
-    pub fn prove_azero(&mut self) -> FungibleProof {
-      let rm = ResourceManager::from(self.power_azero);
-      let a0 = Self::authorize(&mut self.power_alpha, || rm.mint(dec!(1)));
-      let ret = a0.as_fungible().create_proof_of_amount(dec!(1));
-      a0.burn();
-      return ret
-    }
-
     pub fn make_azero(&mut self) -> Bucket {
       let rm = ResourceManager::from(self.power_azero);
-      Self::authorize(&mut self.power_alpha, || rm.mint(dec!(1)))
+      self.power_alpha.as_fungible().authorize_with_amount(dec!(1), || rm.mint(dec!(1)))
     }
-
-    // internal 
-
-    fn authorize<F: FnOnce() -> O, O>(power: &mut Vault, f: F) -> O {
-      let temp = power.as_fungible().take_all();
-      let ret = temp.authorize_with_all(|| {
-        f()
-      });
-      power.put(temp.into());
-      return ret
-    }
-
   }
 }

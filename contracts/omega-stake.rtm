@@ -1,0 +1,41 @@
+CALL_METHOD
+    Address("component_sim1cptxxxxxxxxxfaucetxxxxxxxxx000527798379xxxxxxxxxhkrefh")
+    "lock_fee"
+    Decimal("5000")
+;
+
+
+CALL_METHOD
+Address("account_sim1c956qr3kxlgypxwst89j9yf24tjc7zxd4up38x37zr6q4jxdx9rhma")
+"create_proof_of_non_fungibles"
+Address("resource_sim1nt09urzxjevpausv0nf07zzhfdlfkyf0u28rj079kzs0w2z6gqgcsp")
+Array<NonFungibleLocalId>(
+NonFungibleLocalId("{3b2c479a44bdad17-8c2435780c2cb4d8-ba2405b0803877da-8135ee9693477697}")
+);
+
+POP_FROM_AUTH_ZONE
+Proof("omegauser");
+
+CALL_METHOD
+Address("account_sim1c956qr3kxlgypxwst89j9yf24tjc7zxd4up38x37zr6q4jxdx9rhma")
+"withdraw"
+Address("resource_sim1t5zzdnx92e8xdjwvzf9pqn77nnugxpy7dtft69qck053k4sqkf5zpp")
+Decimal("42069");
+
+TAKE_FROM_WORKTOP
+Address("resource_sim1t5zzdnx92e8xdjwvzf9pqn77nnugxpy7dtft69qck053k4sqkf5zpp")
+Decimal("42069")
+Bucket("real");
+
+CALL_METHOD
+Address("component_sim1crc2md5fswmnzlvdzclauwetale5gkctje2c24v3hze6c3evmshsyn")
+"stake"
+Bucket("real")
+Proof("omegauser");
+
+CALL_METHOD
+    Address("account_sim1c956qr3kxlgypxwst89j9yf24tjc7zxd4up38x37zr6q4jxdx9rhma")
+    "try_deposit_batch_or_refund"
+    Expression("ENTIRE_WORKTOP")
+    Enum<0u8>()
+;

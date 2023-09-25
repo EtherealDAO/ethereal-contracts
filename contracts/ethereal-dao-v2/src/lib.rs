@@ -271,22 +271,15 @@ mod dao {
 
     fn _execute_proposal(&mut self, proposal: &Proposal) {
       match proposal { 
-        Proposal::UpdateBranch(p,m,f) => Self::authorize(
-          &mut self.power_dao, || 
+        Proposal::UpdateBranch(p,m,f) => 
+          self.power_dao.as_fungible().authorize_with_amount(dec!(1), ||
           ScryptoVmV1Api::blueprint_call(
             *p, m, f,
             scrypto_args!(ResourceManager::from(self.power_zero).mint(1))
           )
         ),
-        Proposal::UpdateSelf(p,m,f) => {
-          let power_dao = self.power_dao.take_all();
-          Self::authorize(
-            &mut self.power_dao, || 
-            ScryptoVmV1Api::blueprint_call(
-              *p, m, f,
-              scrypto_args!(power_dao)
-            )
-          )
+        Proposal::UpdateSelf(_,_,_) => {
+          panic!("REMOVED UNUSED");
         }
       };
     }
@@ -303,15 +296,5 @@ mod dao {
     pub fn set_vote_duration(&mut self, new: u64) {
       self.vote_duration = new;
     }
-
-    fn authorize<F: FnOnce() -> O, O>(power: &mut Vault, f: F) -> O {
-      let temp = power.as_fungible().take_all();
-      let ret = temp.authorize_with_all(|| {
-        f()
-      });
-      power.put(temp.into());
-      return ret
-    }
-
   }
 }

@@ -86,6 +86,7 @@ struct ProposalFinalizedEvent {
 
 #[blueprint]
 #[types(UserReceipt, Proposal, Addr, Action, Vote, SubmittedProposal, u64)]
+#[events(ProposalSubmittedEvent, ProposalFinalizedEvent)]
 mod omega {
   enable_method_auth! {
     roles {
@@ -173,7 +174,7 @@ mod omega {
         .create_with_no_initial_supply()
         .address();
 
-      let proposal_index = 0;
+      let proposal_index = 1;
       let proposals = KeyValueStore::new_with_registered_type();
 
       let proposal_payment = dec!(100);
@@ -227,7 +228,7 @@ mod omega {
     }
 
     pub fn new_user(&mut self) -> Bucket {
-      Self::authorize(&mut self.power_omega, || 
+      self.power_omega.as_fungible().authorize_with_amount(dec!(1), ||  
         ResourceManager::from(self.nft_resource)
           .mint_ruid_non_fungible(
             UserReceipt { lp_amount: dec!(0), top_voted_index: 0u64 })
@@ -256,7 +257,7 @@ mod omega {
         "wrong stake token" );
 
       // update first due to rust borrow checker
-      Self::authorize(&mut self.power_omega, || 
+      self.power_omega.as_fungible().authorize_with_amount(dec!(1), ||  
         rm.update_non_fungible_data(
           &id,
           "lp_amount",
@@ -284,7 +285,7 @@ mod omega {
       assert!( !self.proposals.get(&data.top_voted_index).unwrap().is_active,
         "unstake before voting finished");
 
-      Self::authorize(&mut self.power_omega, || 
+      self.power_omega.as_fungible().authorize_with_amount(dec!(1), || 
         rm.update_non_fungible_data(
           &id,
           "lp_amount",
@@ -366,7 +367,7 @@ mod omega {
 
       // update nft data and execute vote
 
-      Self::authorize(&mut self.power_omega, ||
+      self.power_omega.as_fungible().authorize_with_amount(dec!(1), || 
         rm.update_non_fungible_data(
           &id,
           "top_voted_index",
@@ -563,11 +564,12 @@ mod omega {
             _ => panic!()
           }
 
-          Self::authorize(&mut self.power_omega, || {
-            let p = alpha.call_raw::<FungibleProof>("prove_azero", scrypto_args!());
-            p.authorize( ||
+          self.power_omega.as_fungible().authorize_with_amount(dec!(1), || {
+            let a0 = alpha.call_raw::<Bucket>("make_azero", scrypto_args!());
+            a0.as_fungible().authorize_with_all( ||
               usd.call_raw::<()>("set_params", scrypto_args!(params))
             );
+            a0.burn();
           });
         },
 
@@ -581,17 +583,18 @@ mod omega {
           let (u, e, t) = alpha.call_raw::<(ComponentAddress, ComponentAddress, ComponentAddress)>
             ("get_app_addrs", scrypto_args!());
 
-          Self::authorize(&mut self.power_omega, || {
+          self.power_omega.as_fungible().authorize_with_amount(dec!(1), || {
             let usd: Global<AnyComponent> = u.into();
             let eux: Global<AnyComponent> = e.into();
             let tri: Global<AnyComponent> = t.into();
 
-            let p = alpha.call_raw::<FungibleProof>("prove_azero", scrypto_args!());
-            p.authorize( || {
+            let a0 = alpha.call_raw::<Bucket>("make_azero", scrypto_args!());
+            a0.as_fungible().authorize_with_all( || {
               usd.call_raw::<()>("start_stop", scrypto_args!(startstop));
               eux.call_raw::<()>("start_stop", scrypto_args!(startstop));
               tri.call_raw::<()>("start_stop", scrypto_args!(startstop));
             });
+            a0.burn();
           });
         },
 
@@ -606,7 +609,7 @@ mod omega {
 
           let edao_proposal = EDaoProposal::UpdateBranch(*pa, s1.clone(), s2.clone());
           let ix = dao.call_raw::<()>("add_proposal", scrypto_args!(edao_proposal, self.prove_omega()));
-          let p = Self::authorize(&mut self.power_omega, || 
+          let p = self.power_omega.as_fungible().authorize_with_amount(dec!(1), || 
             alpha.call_raw::<FungibleProof>("prove_alpha", scrypto_args!()));
           dao.call_raw::<()>("vote", scrypto_args!(EDaoVote::For, ix, p));
           // 2/3 is reached so it executes the proposal function, moves power zero to it
@@ -638,7 +641,7 @@ mod omega {
           let alpha: Global<AnyComponent> = a.into();
           let delta: Global<AnyComponent> = d.into();
 
-          let p = Self::authorize(&mut self.power_omega, || 
+          let p = self.power_omega.as_fungible().authorize_with_amount(dec!(1), || 
             alpha.call_raw::<FungibleProof>("prove_alpha", scrypto_args!()));
           let ret = p.authorize(|| 
             delta.call_raw::<Bucket>("withdraw", scrypto_args!(ra, size)));
@@ -670,7 +673,7 @@ mod omega {
             ("get_app_addrs", scrypto_args!());
 
           let delta: Global<AnyComponent> = d.into();
-          let pa = Self::authorize(&mut self.power_omega, || 
+          let pa = self.power_omega.as_fungible().authorize_with_amount(dec!(1), || 
             alpha.call_raw::<FungibleProof>("prove_alpha", scrypto_args!()));
           
           // 50k for 'backing' the 777 EUSD, 17k to be paired with EUSD
@@ -678,11 +681,11 @@ mod omega {
           // but otherwise statically well telegraphed
           let mut exrd = pa.authorize(|| 
             delta.call_raw::<Bucket>("withdraw", scrypto_args!(exrd, dec!("67000"))));
-
-          let pa0 = Self::authorize(&mut self.power_omega, || 
-            alpha.call_raw::<FungibleProof>("prove_azero", scrypto_args!()));
           
-          pa0.authorize(|| {
+          let a0 = self.power_omega.as_fungible().authorize_with_amount(dec!(1), || 
+            alpha.call_raw::<Bucket>("make_azero", scrypto_args!()));
+          
+          a0.as_fungible().authorize_with_all(|| {
             let usd: Global<AnyComponent> = u.into();
             let eux: Global<AnyComponent> = e.into();
             let tri: Global<AnyComponent> = t.into();
@@ -692,7 +695,7 @@ mod omega {
             
             let euxlp = eux.call_raw::<Bucket>("first_deposit", 
               scrypto_args!(eusd, exrd));
-
+            
             // TODO put number after price discovery happens
             let real = self.token.take(dec!("3.50")); 
             let etlp = tri.call_raw::<Bucket>("first_deposit",
@@ -701,6 +704,7 @@ mod omega {
             delta.call_raw::<()>("deposit", scrypto_args!(etlp));
             delta.call_raw::<()>("deposit", scrypto_args!(ecdp));
           });
+          a0.burn();
         }
       }
     }
@@ -709,15 +713,6 @@ mod omega {
       self.dao_addr = new;
     }
 
-    fn authorize<F: FnOnce() -> O, O>(power: &mut Vault, f: F) -> O {
-      let temp = power.as_fungible().take_all();
-      let ret = temp.authorize_with_all(|| {
-        f()
-      });
-      power.put(temp.into());
-      return ret
-    }
-    
     // type Addr = Result<ComponentAddress, (PackageAddress, String)>;
     fn call_addr(addr: &Addr, s: &str, args: Vec<u8>) {
       match addr {
