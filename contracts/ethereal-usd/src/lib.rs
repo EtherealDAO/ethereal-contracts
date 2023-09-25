@@ -470,6 +470,8 @@ mod usd {
       self.liabilities_lp_total += liabilities_lp;
       self.liabilities_total = liabilities_lp;
 
+      self.exrd_vault.put(input);
+
       Runtime::emit_event(
         NewEcdpEvent { ecdp: id.clone() });
       Runtime::emit_event(
