@@ -156,7 +156,7 @@ mod usd {
     oracle1: ResourceAddress,
     oracle2: ResourceAddress,
 
-    stopped: bool // TODO make work
+    stopped: bool // TODO should AA be also stopped?
   }
 
   impl Usd {
@@ -298,7 +298,7 @@ mod usd {
         oracle1,
         oracle2,
 
-        stopped: false // TODO: need vote to start
+        stopped: true
       }
       .instantiate()
       .prepare_to_globalize(OwnerRole::None)

@@ -31,7 +31,7 @@ mod tri {
     resources: ((ResourceAddress, Decimal), (ResourceAddress, Decimal)),
     pool: ComponentAddress,
     swap_fee: Decimal,
-    stopped: bool // TODO make work
+    stopped: bool 
   }
 
   impl Tri {
@@ -105,7 +105,7 @@ mod tri {
         resources: ((t1, t1w), (t2, t2w)),
         pool: pool.address(),
         swap_fee,
-        stopped: false // TODO: need vote to start
+        stopped: true
       }
       .instantiate()
       .prepare_to_globalize(OwnerRole::None)

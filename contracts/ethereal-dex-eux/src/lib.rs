@@ -29,7 +29,7 @@ mod eux {
     pool: (Vault, Vault),
     pool_lp: (ResourceAddress, Decimal),
     swap_fee: Decimal,
-    stopped: bool // TODO make work
+    stopped: bool 
   }
 
   impl Eux {
@@ -79,7 +79,7 @@ mod eux {
         pool,
         pool_lp: (lp_ra, dec!(0)),
         swap_fee,
-        stopped: false // TODO: need vote to start
+        stopped: true
       }
       .instantiate()
       .prepare_to_globalize(OwnerRole::None)
