@@ -498,7 +498,7 @@ mod usd {
       assert!( self.liabilities_lp_total != dec!(0) && self.assets_lp_total != dec!(0),
         "need a first ecdp first" );
 
-      assert!( fee.amount() < dec!("100"), 
+      assert!( fee.amount() >= dec!("100"), 
         "fee too small" );
 
       self.xrd_vault.put(fee);
