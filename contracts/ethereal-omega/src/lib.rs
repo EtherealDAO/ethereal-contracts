@@ -623,7 +623,8 @@ mod omega {
             ("get_branch_addrs", scrypto_args!());
           
           let alpha: Global<AnyComponent> = a.into();
-          let a0 = alpha.call_raw::<FungibleProof>("make_azero", scrypto_args!());
+          let a0 = self.power_omega.as_fungible().authorize_with_amount(dec!(1), || 
+            alpha.call_raw::<FungibleProof>("make_azero", scrypto_args!()));
           ScryptoVmV1Api::blueprint_call(
             *pm,
             s1,

@@ -330,6 +330,111 @@ mod usd {
       return (a1, eusd_resource)
     }
 
+    // update instantiate path
+    pub fn from_something(alpha_addr: ComponentAddress, power_azero: ResourceAddress,
+      power_eux: ResourceAddress, power_usd: Bucket, 
+      exrd_validator: ComponentAddress, 
+      lower_bound: Decimal, upper_bound: Decimal, flash_fee: Decimal, bang: ComponentAddress,
+      oracle_init: Decimal, oracle1: ResourceAddress, oracle2: ResourceAddress,
+      exrd: Bucket, xrd: Bucket,
+      ecdp_resource: ResourceAddress, eusd_resource: ResourceAddress, 
+      assets_lp_total: Decimal, liabilities_lp_total: Decimal,
+      liabilities_total: Decimal,
+      ep: Decimal, mcr: Decimal, bp: Decimal, 
+      maximum_minted: Decimal) -> ComponentAddress {
+      
+      // recreate flash because we don't care about preserving it
+      let flash_resource = 
+        ResourceBuilder::new_ruid_non_fungible_with_registered_type::<Flash>(OwnerRole::None)
+        .metadata(metadata!(
+          init {
+            "name" => "FLASHFLASHFLASHFLASH".to_owned(), locked;
+          }
+        ))
+        .mint_roles(mint_roles!(
+          minter => rule!(require(power_usd.resource_address()));
+          minter_updater => rule!(deny_all);
+        ))
+        .burn_roles(burn_roles!(
+          burner => rule!(require(power_usd.resource_address()));
+          burner_updater => rule!(deny_all);
+        ))
+        .deposit_roles(deposit_roles!(
+          depositor => rule!(deny_all);
+          depositor_updater => rule!(deny_all);
+        ))
+        .create_with_no_initial_supply()
+        .address();
+      
+      Self {
+        alpha_addr,
+
+        power_usd: Vault::with_bucket(power_usd),
+
+        ecdp_resource,
+
+        assets_lp_total,
+        liabilities_lp_total,
+
+        liabilities_total,
+        eusd_resource,
+        
+        exrd_vault: Vault::with_bucket(exrd),
+        xrd_vault: Vault::with_bucket(xrd),
+        exrd_validator,
+
+        ep,
+        mcr,
+        bp,
+
+        lower_bound,
+        upper_bound,
+
+        maximum_minted,
+
+        flash_resource,
+        fl_active: false,
+        fm_active: false,
+        flash_fee,
+
+        // here it is the feed at moment of update
+        oracle: oracle_init, 
+        // arguably could be also passed as arg but might as well give it some extra time
+        oracle_timestamp: Clock::current_time_rounded_to_minutes(),
+        oracle1,
+        oracle2,
+
+        // no point in starting it stopped
+        stopped: false
+      }
+      .instantiate()
+      .prepare_to_globalize(OwnerRole::None)
+      .roles(
+        roles!(
+          azero => rule!(require(power_azero));
+          dex => rule!(require(power_eux));
+        )
+      )
+      .metadata(
+        metadata!(
+          roles {
+            metadata_setter => rule!(require(power_azero));
+            metadata_setter_updater => rule!(deny_all);
+            metadata_locker => rule!(deny_all);
+            metadata_locker_updater => rule!(deny_all);
+          },
+          init {
+            "dapp_definition" =>
+              GlobalAddress::from(bang), updatable;
+            "tags" => vec!["ethereal-dao".to_owned(), 
+              "usd".to_owned(), "stablecoin".to_owned()], updatable;
+          }
+        )
+      )
+      .globalize()
+      .address()
+    }
+
     pub fn to_nothing(&mut self) -> (Bucket, Bucket, Bucket) {
       (
         self.power_usd.take_all(),
@@ -539,7 +644,7 @@ mod usd {
         / ( new_liabilities_lp * lp_usd );
       assert!( cr >= self.mcr, 
         "cannot mint under mcr");
-      assert!( self.liabilities_total + new_liabilities_lp * lp_usd > self.maximum_minted, 
+      assert!( self.liabilities_total + new_liabilities_lp * lp_usd <= self.maximum_minted, 
         "exceeded maximum minted");
 
       Runtime::emit_event(
