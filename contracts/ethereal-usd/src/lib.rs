@@ -68,7 +68,6 @@ struct OracleEvent {
 // code
 
 #[blueprint]
-#[types(Ecdp, Flash)]
 #[events(FlashEvent, NewEcdpEvent, EcdpLiquidatedEvent,
   EcdpAssetsEvent, EcdpLiabilitiesEvent,
   OracleEvent, AAEvent)]
@@ -169,7 +168,7 @@ mod usd {
       ) -> (ComponentAddress, ResourceAddress) {
 
       let flash_resource = 
-        ResourceBuilder::new_ruid_non_fungible_with_registered_type::<Flash>(OwnerRole::None)
+        ResourceBuilder::new_ruid_non_fungible::<Flash>(OwnerRole::None)
         .metadata(metadata!(
           init {
             "name" => "FLASHFLASHFLASHFLASH".to_owned(), locked;
@@ -224,7 +223,7 @@ mod usd {
 
       // TODO: metadata
       let ecdp_resource = 
-        ResourceBuilder::new_ruid_non_fungible_with_registered_type::<Ecdp>(OwnerRole::None)
+        ResourceBuilder::new_ruid_non_fungible::<Ecdp>(OwnerRole::None)
         .metadata(metadata!(
           roles {
             metadata_setter => rule!(require(power_usd.resource_address()));
@@ -345,7 +344,7 @@ mod usd {
       
       // recreate flash because we don't care about preserving it
       let flash_resource = 
-        ResourceBuilder::new_ruid_non_fungible_with_registered_type::<Flash>(OwnerRole::None)
+        ResourceBuilder::new_ruid_non_fungible::<Flash>(OwnerRole::None)
         .metadata(metadata!(
           init {
             "name" => "FLASHFLASHFLASHFLASH".to_owned(), locked;
