@@ -221,6 +221,7 @@ mod tri {
           WithdrawStrategy::Rounded(RoundingMode::ToZero))
       })
     }
+    
     // AUXILIARY (for interop)
 
     // how many to input to get a set number on output? 
