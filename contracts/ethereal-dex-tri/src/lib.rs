@@ -271,7 +271,7 @@ mod tri {
       
       let reserves_in = reserves.get(&ra_in).expect("coherence error");
 
-      if target >= spot_price {
+      if target > spot_price {
         Some(  
           (*reserves_in * (
             (target / spot_price)
@@ -305,7 +305,7 @@ mod tri {
 
     // simulated swap, returns the amount that will be returned with a regular swap
     pub fn sim_swap(&mut self, input: Decimal, resource_in: ResourceAddress) -> Decimal {
-      let (_ra_out, size_out) = self.swap_size(resource_in, input);
+      let (_ra_out, size_out) = self.swap_size(resource_in, input * self.swap_fee);
 
       size_out
     }
