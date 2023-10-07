@@ -38,21 +38,12 @@ mod delta {
   impl Delta {
     pub fn from_nothing(dao_addr: ComponentAddress, power_zero: ResourceAddress,
       power_alpha: ResourceAddress, power_delta: Bucket,
-      real: Bucket, euxlp: ResourceAddress, bang: ComponentAddress,
-      mut wl: Vec<ResourceAddress> // whitelist tlp, exrd, xrd, eusd
+      real: Bucket, euxlp: ResourceAddress, bang: ComponentAddress
     ) -> ComponentAddress {
-      // add real, euxlp to whitelist 
-      assert_eq!(wl.len(), 4,"check whitelisted resource addresses");
-      wl.push(real.resource_address());
-      wl.push(euxlp);
+      
+      let aa_treasury = (Vault::with_bucket(real), Vault::new(euxlp));
 
       let treasury = KeyValueStore::new();
-
-      for ra in wl {
-        treasury.insert(ra, Vault::new(ra));
-      }
-
-      let aa_treasury = (Vault::with_bucket(real), Vault::new(euxlp));
 
       Self {
         dao_addr,
@@ -93,13 +84,12 @@ mod delta {
       self.power_delta.take_all()
     }
 
-    pub fn deposit(&mut self, input: Bucket) -> Option<Bucket> {
+    pub fn deposit(&mut self, input: Bucket) {
       if let Some(mut v) = self.treasury.get_mut(&input.resource_address()) {
         v.deref_mut().put(input);
-        return None
-      }
-      info!("no resource found");
-      Some(input)
+        return
+      };
+      self.treasury.insert(input.resource_address(), Vault::with_bucket(input));
     }
 
     pub fn withdraw(&mut self, resource: ResourceAddress, amount: Decimal) -> Bucket {
