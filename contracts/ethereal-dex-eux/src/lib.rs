@@ -166,10 +166,11 @@ mod eux {
       let in2 = b2.amount();
       let pool1 = self.pool.0.amount();
       let pool2 = self.pool.1.amount();
+      let pool_ratio = pool1 / pool2;
 
-      if (pool1 / pool2) < (in1 / in2) {
-        let in1new = in2 * pool1 / pool2;
-        let minted = self.pool_lp.1 * in1new / pool1;
+      if pool_ratio < (in1 / in2) {
+        let in1new = in2 * pool_ratio;
+        let minted = (self.pool_lp.1 / pool1) * in1new;
 
         self.pool_lp.1 += minted;
  
@@ -182,9 +183,9 @@ mod eux {
           Some(b1)
         )
 
-      } else if (pool1 / pool2) > (in1 / in2) {
-        let in2new = in1 * pool2 / pool1; 
-        let minted = self.pool_lp.1 * in2new / pool2;
+      } else if pool_ratio > (in1 / in2) {
+        let in2new = in1 * 1 / pool_ratio; 
+        let minted = (self.pool_lp.1 / pool2) * in2new;
 
         self.pool_lp.1 += minted;
 
@@ -198,7 +199,7 @@ mod eux {
         )
 
       } else {
-        let minted = self.pool_lp.1 * in1 / pool1;
+        let minted = (self.pool_lp.1 / pool1) * in1;
         self.pool_lp.1 += minted;
 
         self.pool.0.put(b1);
@@ -211,7 +212,7 @@ mod eux {
         )
       }
     }
-
+    
     pub fn remove_liquidity(&mut self, input: Bucket) -> (Bucket, Bucket) {
       assert!( !self.stopped && !self.power_eux.is_empty(),
         "DEX stopped or empty"); 
@@ -236,14 +237,14 @@ mod eux {
       let ra_in = input.resource_address();
 
       if ra_in == self.pool.0.resource_address() {
-        let size_out = (size_in * self.pool.1.amount()) 
-          / (size_in + self.pool.0.amount());
+        let size_out = size_in * (self.pool.1.amount() 
+          / (size_in + self.pool.0.amount()));
 
         self.pool.0.put(input);
         self.pool.1.take(size_out)
       } else { // no need to check, will err on wrong ra
-        let size_out = (size_in * self.pool.0.amount()) 
-          / (size_in + self.pool.1.amount());
+        let size_out = size_in * (self.pool.0.amount() 
+          / (size_in + self.pool.1.amount()));
 
         self.pool.1.put(input);
         self.pool.0.take(size_out)
@@ -418,9 +419,19 @@ mod eux {
 
     // AUXILIARY (for interop)
 
-    // how many to input to get a set number on output? 
-    pub fn in_given_out(&self, _output: Decimal, _resource_in: ResourceAddress) { // -> Decimal {
+    // how many to input to get a set number on output?
+    pub fn in_given_out(&self, output: Decimal, resource_in: ResourceAddress) -> Decimal {
+      if resource_in == self.pool.0.resource_address(){
+        // assert!(output < self.pool.1.amount(),'output amount error');  //to avoid negative/NaNs outcome?
 
+        (output * (self.pool.0.amount()
+          / (self.pool.1.amount() - output))) / self.swap_fee     
+      } else { // no need to check, will err on wrong ra
+        // assert!(output < self.pool.0.amount(),'output amount error');  //to avoid negative/NaNs outcome?
+      
+        (output * (self.pool.1.amount()
+          / (self.pool.0.amount() - output))) / self.swap_fee 
+      } 
     }
 
     // how many to input to push it to target price?
@@ -454,7 +465,6 @@ mod eux {
       (self.pool.0.amount(), self.pool.1.amount())
     }
 
-
     // lookup spot price between the assets
     // EUSD / EXRD 
     pub fn spot_price(&self) -> Decimal {
@@ -463,8 +473,18 @@ mod eux {
     }
 
     // simulated swap, returns the amount that will be returned with a regular swap
-    pub fn sim_swap(&self, _input: Decimal, _resource_in: ResourceAddress) { // -> Decimal {
+    pub fn sim_swap(&self, input: Decimal, resource_in: ResourceAddress) -> Decimal {
+      let size_in = input * self.swap_fee;
+
+      if resource_in == self.pool.0.resource_address() {
+
+        size_in * (self.pool.1.amount() 
+          / (size_in + self.pool.0.amount()))
+      } else { // no need to check, will err on wrong ra
       
+        size_in * (self.pool.0.amount() 
+          / (size_in + self.pool.1.amount()))
+      }      
     }
   }
 }

@@ -17,6 +17,9 @@ mod delta {
       withdraw => restrict_to: [alpha];
       prove_delta => restrict_to: [alpha];
       set_dao_addr => restrict_to: [zero];
+      // from treasury to aa treasury    
+      t_to_aat_some => restrict_to: [alpha];  // trans some or trans all
+      t_to_aat_all => restrict_to: [alpha];   // trans all
     }
   }
 
@@ -35,11 +38,9 @@ mod delta {
   impl Delta {
     pub fn from_nothing(dao_addr: ComponentAddress, power_zero: ResourceAddress,
       power_alpha: ResourceAddress, power_delta: Bucket,
-      real:Bucket, euxlp: ResourceAddress, bang: ComponentAddress
+      real: Bucket, euxlp: ResourceAddress, bang: ComponentAddress
     ) -> ComponentAddress {
-      // needs to whitelist
-      // real, tlp, euxlp, exrd, xrd, eusd
-
+      
       let aa_treasury = (Vault::with_bucket(real), Vault::new(euxlp));
 
       let treasury = KeyValueStore::new();
@@ -88,7 +89,7 @@ mod delta {
         v.deref_mut().put(input);
         return
       };
-      self.treasury.insert(input.resource_address(), Vault::with_bucket(input))
+      self.treasury.insert(input.resource_address(), Vault::with_bucket(input));
     }
 
     pub fn withdraw(&mut self, resource: ResourceAddress, amount: Decimal) -> Bucket {
@@ -109,7 +110,7 @@ mod delta {
     pub fn aa_tap(&mut self) -> (Option<Bucket>, Option<Bucket>) {
       info!("aa_top IN"); 
 
-      // honestly it pulling all at once is a hack to add miaximum possible size
+      // honestly it pulling all at once is a hack to add maximum possible size
       // without doing any calculation
       ( 
         if self.aa_treasury.0.is_empty() { None } else { Some(self.aa_treasury.0.take_all()) }, 
@@ -130,7 +131,7 @@ mod delta {
       }
     }
 
-    // pupeteer delta by alpha
+    // puppeteer delta by alpha
     pub fn prove_delta(&self) -> FungibleProof {
       self.power_delta.as_fungible().create_proof_of_amount(dec!(1))
     }
@@ -139,6 +140,32 @@ mod delta {
       self.dao_addr = new;
     }
 
-    // todo move from treasury to aa treasury
+    // from treasury to aa treasury, take some or take all
+    pub fn t_to_aat_some(&mut self, a_real: Option<Decimal>, a_euxlp: Option<Decimal>) {
+      if let Some(mut v) = self.treasury.get_mut(&self.aa_treasury.0.resource_address()) {
+        if let Some(a) = a_real {
+          self.aa_treasury.0.put(v.deref_mut().take(a_real));
+        } else {
+          self.aa_treasury.0.put(v.deref_mut().take_all());
+        }
+      }
+      if let Some(mut v) = self.treasury.get_mut(&self.aa_treasury.1.resource_address()) {
+        if let Some(a) = a_euxlp {
+          self.aa_treasury.1.put(v.deref_mut().take(a_real));
+        } else {
+          self.aa_treasury.1.put(v.deref_mut().take_all());
+        }
+      }
+    }
+
+    // from treasury to aa treasury, take all
+    pub fn t_to_aat_all(&mut self) {
+      if let Some(mut v) = self.treasury.get_mut(&self.aa_treasury.0.resource_address()) {
+        self.aa_treasury.0.put(v.deref_mut().take_all());
+      }
+      if let Some(mut v) = self.treasury.get_mut(&self.aa_treasury.1.resource_address()) {
+        self.aa_treasury.1.put(v.deref_mut().take_all());  
+      }
+    }
   }
 }

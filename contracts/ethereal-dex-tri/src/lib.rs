@@ -212,6 +212,20 @@ mod tri {
       let size_in = input.amount() * self.swap_fee;
       let ra_in = input.resource_address();
 
+      // block transferred to 'swap_size' method to share swap size calc with 'sim_swap' method 
+      let (ra_out, size_out) = self.swap_size(ra_in, size_in);
+
+      self.power_tri.as_fungible().authorize_with_amount(dec!(1), || {
+        pool.protected_deposit(input);
+        pool.protected_withdraw(ra_out, size_out, 
+          WithdrawStrategy::Rounded(RoundingMode::ToZero))
+      })
+    }
+    
+    // AUXILIARY (for interop)
+
+    // how many to input to get a set number on output? 
+    pub fn in_given_out(&self, size_out: Decimal, ra_in: ResourceAddress) -> Decimal {
       let reserves = self.vault_reserves();
 
       let (ra_out, w_out) = if ra_in == self.resources.0.0 {
@@ -225,30 +239,49 @@ mod tri {
       let reserves_out = reserves.get(&ra_out).expect("coherence error");
       let reserves_in = reserves.get(&ra_in).expect("coherence error");
 
-      let size_out = 
-        *reserves_out * (dec!("1") - 
-          (*reserves_in / (*reserves_in + size_in))
-            .pow((dec!("1") - w_out) / w_out).expect("power incoherence") 
-        );
-
-      self.power_tri.as_fungible().authorize_with_amount(dec!(1), || {
-        pool.protected_deposit(input);
-        pool.protected_withdraw(ra_out, size_out, 
-          WithdrawStrategy::Rounded(RoundingMode::ToZero))
-      })
-    }
-
-    // AUXILIARY (for interop)
-
-    // how many to input to get a set number on output? 
-    pub fn in_given_out(&self, _output: Decimal, _resource_in: ResourceAddress) { // -> Decimal {
-
+      (*reserves_in * (
+        (*reserves_out / (*reserves_out - size_out))
+        .pow(w_out / (dec!("1") - w_out)).expect("power incoherence") 
+        - dec!("1"))
+      ) / self.swap_fee
     }
 
     // how many to input to push it to target price?
     // returns None, if target < spot
-    pub fn in_given_price(&self, _target: Decimal, _resource_in: ResourceAddress) { // -> Option<Decimal> {
+    pub fn in_given_price(&self, target: Decimal, ra_in: ResourceAddress) -> Option<Decimal> {
+      let reserves = self.vault_reserves();
 
+      let (spot_price,w_out) = if ra_in == self.resources.0.0 {
+        (
+          ((*reserves.get(&self.resources.0.0).expect("incoherence") / self.resources.0.1)
+          /
+          (*reserves.get(&self.resources.1.0).expect("incoherence") / self.resources.1.1)),
+          self.resources.1.1
+        )
+      } else if ra_in == self.resources.1.0 {
+        (
+          ((*reserves.get(&self.resources.1.0).expect("incoherence") / self.resources.1.1)
+          /
+          (*reserves.get(&self.resources.0.0).expect("incoherence") / self.resources.0.1)),
+          self.resources.0.1
+        )
+      } else {
+        panic!("wrong resource input")
+      };
+      
+      let reserves_in = reserves.get(&ra_in).expect("coherence error");
+
+      if target > spot_price {
+        Some(  
+          (*reserves_in * (
+            (target / spot_price)
+            .pow(w_out).expect("power incoherence") 
+            - dec!("1"))) 
+          / self.swap_fee
+        )
+      } else {
+        None
+      }
     }
 
     // dumps current # of in each bucket
@@ -257,8 +290,7 @@ mod tri {
 
       pool.get_vault_amounts()
     }
-
-
+    
     // lookup spot price between the assets
     // todo check if it's REAL/EUXLP or the other way round
     pub fn spot_price(&self) -> Decimal {
@@ -272,8 +304,34 @@ mod tri {
     }
 
     // simulated swap, returns the amount that will be returned with a regular swap
-    pub fn sim_swap(&self, _input: Decimal, _resource_in: ResourceAddress) { // -> Decimal {
+    pub fn sim_swap(&mut self, input: Decimal, resource_in: ResourceAddress) -> Decimal {
+      let (_ra_out, size_out) = self.swap_size(resource_in, input * self.swap_fee);
 
+      size_out
     }
+
+    // 'out_given_in' and 'sim_swap' methods swap size calculation
+    fn swap_size(&mut self, ra_in: ResourceAddress, size_in: Decimal) -> (ResourceAddress,Decimal) {
+      let reserves = self.vault_reserves();
+
+      let (ra_out, w_out) = if ra_in == self.resources.0.0 {
+        self.resources.1
+      } else if ra_in == self.resources.1.0 {
+        self.resources.0
+      } else {
+        panic!("wrong resource input")
+      };
+
+      let reserves_out = reserves.get(&ra_out).expect("coherence error");
+      let reserves_in = reserves.get(&ra_in).expect("coherence error");
+      
+      (
+        ra_out, 
+        *reserves_out * (dec!("1") - 
+          (*reserves_in / (*reserves_in + size_in))
+            .pow((dec!("1") - w_out) / w_out).expect("power incoherence") 
+          )
+      )
+    }  
   }
 }
